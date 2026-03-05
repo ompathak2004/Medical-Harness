@@ -1,0 +1,15 @@
+[project]
+name = "medisearch-agent"
+version = "1.0.0"
+description = "Evidence-based Medical QA Agent with clinical tools, Medisearch retrieval, and Gemini LLM"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "python-dotenv>=1.0.0",
+    "requests>=2.28.0",
+    "medisearch-client>=0.3.0",
+]
+
+[project.scripts]
+medisearch-agent = "main:run"

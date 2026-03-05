@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+python-dotenv
+medisearch-client
+pydantic
+requests
