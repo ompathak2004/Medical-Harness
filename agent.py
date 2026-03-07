@@ -131,9 +131,29 @@ def _parse_json_response(text: str) -> dict:
 
 
 class AgentPipeline:
+    MAX_CLARIFICATIONS = 2
+
     def __init__(self, gemini: GeminiClient, evidence: EvidenceRetriever):
         self.gemini = gemini
         self.evidence = evidence
+
+    def _count_prior_clarifications(self, conversation: list[str]) -> int:
+        """Count how many times the assistant already asked follow-up questions.
+
+        Assistant messages are at odd indices (1, 3, 5, ...).  A message that
+        starts with a question-like pattern from our triage step counts as a
+        clarification round.  We detect these by checking for the bullet-style
+        questions the triage step produces (the frontend joins them with spaces).
+        """
+        count = 0
+        for i in range(1, len(conversation), 2):  # assistant turns only
+            msg = conversation[i]
+            # Triage follow-ups are joined questions; a reliable signal is that
+            # the assistant message contains '?' and is relatively short (no
+            # citations, no evidence, no article references).
+            if "?" in msg and "[1]" not in msg and len(msg) < 600:
+                count += 1
+        return count
 
     def run(self, conversation: list[str], conversation_id: str) -> dict:
         """
@@ -155,31 +175,48 @@ class AgentPipeline:
         conv_text = self._format_conversation(conversation)
 
         # --- Step 1: Triage ---
+        prior_asks = self._count_prior_clarifications(conversation)
         triage = self._triage(conv_text)
         if triage.get("action") == "ask" and triage.get("follow_up_questions"):
-            return {
-                "type": "follow_up",
-                "follow_up_questions": triage["follow_up_questions"],
-                "answer": None,
-                "articles": [],
-                "tool_results": [],
-                "followups": [],
-            }
+            if prior_asks >= self.MAX_CLARIFICATIONS:
+                logger.info(
+                    "Clarification limit reached (%d/%d), proceeding to answer",
+                    prior_asks,
+                    self.MAX_CLARIFICATIONS,
+                )
+            else:
+                return {
+                    "type": "follow_up",
+                    "follow_up_questions": triage["follow_up_questions"],
+                    "answer": None,
+                    "articles": [],
+                    "tool_results": [],
+                    "followups": [],
+                }
 
         # --- Step 2-4: Tool selection, extraction, execution ---
         tool_results = self._run_tools(conv_text)
 
         # --- Step 5: Evidence retrieval ---
+        logger.info("Starting evidence retrieval via MediSearch")
         evidence_result = self.evidence.search(
             conversation=conversation,
             conversation_id=conversation_id,
         )
+        logger.info(
+            "Evidence retrieval complete: %d articles, response_length=%d",
+            len(evidence_result.get("articles", [])),
+            len(evidence_result.get("response", "")),
+        )
 
         # --- Step 6: Answer generation ---
         question = conversation[-1]
+        logger.info("Generating answer for question: %s", question[:200])
         answer = self._generate_answer(question, tool_results, evidence_result)
+        logger.info("Answer generated, length=%d", len(answer))
 
         # --- Step 7: Safety check ---
+        logger.info("Running safety check")
         answer = self._safety_check(question, answer, evidence_result)
 
         return {
@@ -202,7 +239,9 @@ class AgentPipeline:
         prompt = TRIAGE_PROMPT.format(conversation=conv_text)
         try:
             raw = self.gemini.generate(prompt)
-            return _parse_json_response(raw)
+            triage = _parse_json_response(raw)
+            logger.info("Triage result: %s", triage)
+            return triage
         except Exception:
             logger.exception("Triage step failed, defaulting to answer")
             return {"action": "answer", "follow_up_questions": []}
@@ -220,12 +259,14 @@ class AgentPipeline:
         try:
             raw = self.gemini.generate(prompt)
             selection = _parse_json_response(raw)
+            logger.info("Tool selection result: %s", selection)
         except Exception:
             logger.exception("Tool selection failed")
             return []
 
         selected = selection.get("selected_tools", [])
         if not selected:
+            logger.info("No tools selected")
             return []
 
         results = []
@@ -242,6 +283,7 @@ class AgentPipeline:
             # Execute tool
             try:
                 result = tool_info["function"](variables)
+                logger.info("Tool execution result for %s: %s", tool_key, result)
                 results.append(result)
             except Exception:
                 logger.exception("Tool execution failed for %s", tool_key)
@@ -259,6 +301,7 @@ class AgentPipeline:
         try:
             raw = self.gemini.generate(prompt)
             parsed = _parse_json_response(raw)
+            logger.info("Variable extraction for %s: %s", tool_name, parsed)
             # Remove null values — tool functions use .get() with defaults
             return {k: v for k, v in parsed.items() if v is not None}
         except Exception:

@@ -16,16 +16,17 @@ from pydantic import BaseModel
 from agent import AgentPipeline
 from evidence_retriever import EvidenceRetriever
 from llm_client import GeminiClient
+from logger import setup_logging
 
 load_dotenv()
 
-logging.basicConfig(level=logging.INFO)
+setup_logging()
 logger = logging.getLogger(__name__)
 
 # --- Initialize components ---
 gemini = GeminiClient(
     api_key=os.environ["GEMINI_API_KEY"],
-    model=os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
+    model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
 )
 evidence = EvidenceRetriever(api_key=os.environ["MEDISEARCH_API_KEY"])
 pipeline = AgentPipeline(gemini=gemini, evidence=evidence)

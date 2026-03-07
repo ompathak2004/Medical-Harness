@@ -3,203 +3,773 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MediSearch Agent</title>
+  <title>MediSearch Agent — Evidence-Based Medical QA</title>
+  <meta name="description" content="AI-powered medical question answering with peer-reviewed evidence and clinical tools.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <style>
+    :root {
+      --bg-primary: #0a0a0a;
+      --bg-secondary: #111111;
+      --bg-tertiary: #1a1a1a;
+      --bg-card: #161616;
+      --bg-hover: #1e1e1e;
+      --bg-input: #141414;
+      --border-primary: #2a2a2a;
+      --border-secondary: #222222;
+      --border-accent: #333333;
+      --text-primary: #e8e8e8;
+      --text-secondary: #a0a0a0;
+      --text-tertiary: #666666;
+      --text-muted: #555555;
+      --accent: #ffffff;
+      --accent-dim: rgba(255,255,255,0.08);
+      --accent-hover: rgba(255,255,255,0.12);
+      --citation-bg: rgba(255,255,255,0.06);
+      --citation-hover: rgba(255,255,255,0.14);
+      --citation-text: #c0c0c0;
+      --tool-bg: rgba(255,255,255,0.04);
+      --tool-border: #2a2a2a;
+      --success: #4ade80;
+      --warning: #fbbf24;
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 14px;
+      --radius-xl: 18px;
+      --shadow-sm: 0 1px 3px rgba(0,0,0,0.4);
+      --shadow-md: 0 4px 12px rgba(0,0,0,0.5);
+      --shadow-lg: 0 8px 30px rgba(0,0,0,0.6);
+      --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: #f0f2f5;
-      color: #1a1a2e;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
       height: 100vh;
       display: flex;
       flex-direction: column;
+      overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
     }
 
+    /* ── Header ── */
     header {
-      background: #1a1a2e;
-      color: #fff;
-      padding: 14px 24px;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border-primary);
+      padding: 12px 24px;
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 14px;
+      z-index: 100;
+      flex-shrink: 0;
     }
-    header h1 { font-size: 1.2rem; font-weight: 600; }
-    header .subtitle { font-size: 0.8rem; color: #a0a0c0; }
+    .header-logo {
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-primary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .header-logo svg {
+      width: 18px;
+      height: 18px;
+      stroke: var(--text-secondary);
+      fill: none;
+      stroke-width: 1.5;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .header-text h1 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      color: var(--text-primary);
+    }
+    .header-text .subtitle {
+      font-size: 0.72rem;
+      color: var(--text-tertiary);
+      font-weight: 400;
+      letter-spacing: 0.02em;
+      margin-top: 1px;
+    }
+    .header-status {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.72rem;
+      color: var(--text-tertiary);
+    }
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--success);
+      animation: pulse-dot 2s ease-in-out infinite;
+    }
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    /* ── Main Layout ── */
+    .main-layout {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* ── Chat Area ── */
+    .chat-area {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      transition: margin-right var(--transition);
+    }
 
     #chat-container {
       flex: 1;
       overflow-y: auto;
-      padding: 24px;
+      padding: 24px 20px;
       display: flex;
       flex-direction: column;
-      gap: 16px;
+      gap: 8px;
+      scroll-behavior: smooth;
+    }
+    #chat-container::-webkit-scrollbar { width: 4px; }
+    #chat-container::-webkit-scrollbar-track { background: transparent; }
+    #chat-container::-webkit-scrollbar-thumb {
+      background: var(--border-accent);
+      border-radius: 4px;
+    }
+
+    /* ── Messages ── */
+    .msg-wrapper {
+      max-width: 740px;
+      width: 100%;
+      margin: 0 auto;
+      display: flex;
+      gap: 12px;
+      animation: msg-in 0.3s ease-out;
+    }
+    @keyframes msg-in {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .msg-wrapper.user { justify-content: flex-end; }
+    .msg-wrapper.assistant { justify-content: flex-start; }
+
+    .msg-avatar {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+    .msg-avatar.assistant-avatar {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-primary);
+    }
+    .msg-avatar.user-avatar {
+      background: var(--accent-dim);
+      border: 1px solid var(--border-primary);
+    }
+    .msg-avatar svg {
+      width: 14px;
+      height: 14px;
+      stroke: var(--text-secondary);
+      fill: none;
+      stroke-width: 1.5;
+      stroke-linecap: round;
+      stroke-linejoin: round;
     }
 
     .msg {
-      max-width: 780px;
-      width: 100%;
-      margin: 0 auto;
-      padding: 16px 20px;
-      border-radius: 12px;
-      line-height: 1.6;
-      font-size: 0.95rem;
+      padding: 14px 18px;
+      border-radius: var(--radius-lg);
+      line-height: 1.65;
+      font-size: 0.88rem;
       word-wrap: break-word;
+      max-width: 85%;
     }
+
     .msg.user {
-      background: #1a1a2e;
-      color: #fff;
-      align-self: flex-end;
-      border-bottom-right-radius: 4px;
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      border: 1px solid var(--border-primary);
+      border-bottom-right-radius: var(--radius-sm);
     }
     .msg.assistant {
-      background: #fff;
-      border: 1px solid #e0e0e0;
-      align-self: flex-start;
-      border-bottom-left-radius: 4px;
+      background: transparent;
+      color: var(--text-primary);
+      padding-left: 0;
+      padding-right: 0;
+      max-width: 100%;
     }
-    .msg.assistant h3 { margin: 12px 0 6px; font-size: 0.95rem; }
-    .msg.assistant p { margin: 4px 0; }
-    .msg.assistant ul, .msg.assistant ol { margin: 4px 0 4px 20px; }
+
+    .msg.assistant h3 {
+      margin: 16px 0 8px;
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      letter-spacing: -0.01em;
+    }
+    .msg.assistant p { margin: 4px 0; color: var(--text-secondary); }
+    .msg.assistant ul, .msg.assistant ol {
+      margin: 6px 0 6px 20px;
+      color: var(--text-secondary);
+    }
+    .msg.assistant li { margin: 3px 0; }
+    .msg.assistant strong { color: var(--text-primary); font-weight: 500; }
+    .msg.assistant em { color: var(--text-secondary); font-style: italic; }
 
     .msg.system {
-      background: #fff8e1;
-      border: 1px solid #ffe082;
-      align-self: center;
-      text-align: center;
-      font-size: 0.85rem;
-      color: #6d4c00;
-    }
-
-    /* Tool results badge */
-    .tool-badge {
-      display: inline-block;
-      background: #e8f5e9;
-      border: 1px solid #a5d6a7;
-      border-radius: 6px;
-      padding: 8px 12px;
-      margin: 6px 4px;
-      font-size: 0.85rem;
-    }
-    .tool-badge strong { color: #2e7d32; }
-
-    /* Articles */
-    .article-list { margin-top: 12px; }
-    .article-item {
-      background: #f5f5ff;
-      border: 1px solid #c5cae9;
-      border-radius: 8px;
-      padding: 10px 14px;
-      margin: 6px 0;
-      font-size: 0.85rem;
-    }
-    .article-item a { color: #303f9f; text-decoration: none; }
-    .article-item a:hover { text-decoration: underline; }
-    .article-item .meta { color: #666; font-size: 0.8rem; }
-
-    /* Follow-up suggestion chips */
-    .followup-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-    .chip {
-      background: #e3f2fd;
-      border: 1px solid #90caf9;
-      border-radius: 20px;
-      padding: 6px 14px;
-      font-size: 0.82rem;
-      cursor: pointer;
-      transition: background 0.15s;
-    }
-    .chip:hover { background: #bbdefb; }
-
-    /* Input area */
-    #input-area {
-      background: #fff;
-      border-top: 1px solid #ddd;
-      padding: 16px 24px;
-      display: flex;
-      gap: 12px;
-      max-width: 840px;
+      max-width: 740px;
       width: 100%;
       margin: 0 auto;
+      text-align: center;
+      font-size: 0.82rem;
+      color: var(--text-tertiary);
+      padding: 40px 20px;
+      line-height: 1.6;
+    }
+    .system-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 14px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-primary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 16px;
+    }
+    .system-icon svg {
+      width: 22px;
+      height: 22px;
+      stroke: var(--text-muted);
+      fill: none;
+      stroke-width: 1.5;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .system-title {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: 6px;
+    }
+
+    /* ── Citation References in Answer ── */
+    .citation-ref {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--citation-bg);
+      border: 1px solid var(--border-primary);
+      color: var(--citation-text);
+      font-size: 0.7rem;
+      font-weight: 500;
+      min-width: 20px;
+      height: 20px;
+      padding: 0 5px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all var(--transition);
+      vertical-align: middle;
+      margin: 0 1px;
+      position: relative;
+      text-decoration: none;
+      line-height: 1;
+    }
+    .citation-ref:hover {
+      background: var(--citation-hover);
+      border-color: var(--border-accent);
+      color: var(--text-primary);
+      transform: translateY(-1px);
+    }
+
+    /* ── Citation Tooltip (on hover) ── */
+    .citation-tooltip {
+      position: fixed;
+      z-index: 1000;
+      background: var(--bg-card);
+      border: 1px solid var(--border-accent);
+      border-radius: var(--radius-md);
+      padding: 14px 16px;
+      max-width: 340px;
+      width: max-content;
+      box-shadow: var(--shadow-lg);
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.15s ease;
+    }
+    .citation-tooltip.visible {
+      opacity: 1;
+    }
+    .citation-tooltip .tt-title {
+      font-size: 0.82rem;
+      font-weight: 500;
+      color: var(--text-primary);
+      line-height: 1.4;
+      margin-bottom: 6px;
+    }
+    .citation-tooltip .tt-meta {
+      font-size: 0.72rem;
+      color: var(--text-tertiary);
+      margin-bottom: 6px;
+    }
+    .citation-tooltip .tt-tldr {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      line-height: 1.5;
+      font-style: italic;
+    }
+
+    /* ── Tool results ── */
+    .tool-badge {
+      display: inline-flex;
+      flex-direction: column;
+      gap: 4px;
+      background: var(--tool-bg);
+      border: 1px solid var(--tool-border);
+      border-radius: var(--radius-md);
+      padding: 12px 16px;
+      margin: 6px 0;
+      font-size: 0.82rem;
+      color: var(--text-secondary);
+    }
+    .tool-badge strong {
+      color: var(--text-primary);
+      font-weight: 500;
+      font-size: 0.82rem;
+    }
+    .tool-badge .tool-score {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    /* ── Sources section ── */
+    .sources-section {
+      margin-top: 16px;
+      padding-top: 14px;
+      border-top: 1px solid var(--border-secondary);
+    }
+    .sources-label {
+      font-size: 0.75rem;
+      font-weight: 500;
+      color: var(--text-tertiary);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 10px;
+    }
+    .sources-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .source-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--accent-dim);
+      border: 1px solid var(--border-primary);
+      border-radius: var(--radius-sm);
+      padding: 6px 10px;
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all var(--transition);
+      max-width: 260px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .source-chip:hover {
+      background: var(--accent-hover);
+      border-color: var(--border-accent);
+      color: var(--text-primary);
+    }
+    .source-chip .source-num {
+      font-weight: 600;
+      color: var(--text-tertiary);
+      font-size: 0.68rem;
+      flex-shrink: 0;
+    }
+    .source-chip .source-title {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* ── Follow-up chips ── */
+    .followup-section {
+      max-width: 740px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 4px 0;
+    }
+    .followup-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .chip {
+      background: var(--accent-dim);
+      border: 1px solid var(--border-primary);
+      border-radius: 20px;
+      padding: 8px 16px;
+      font-size: 0.78rem;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all var(--transition);
+      font-family: inherit;
+    }
+    .chip:hover {
+      background: var(--accent-hover);
+      border-color: var(--border-accent);
+      color: var(--text-primary);
+    }
+
+    /* ── Input area ── */
+    .input-area-wrapper {
+      border-top: 1px solid var(--border-secondary);
+      background: var(--bg-secondary);
+      padding: 16px 20px;
+      flex-shrink: 0;
+    }
+    #input-area {
+      max-width: 740px;
+      width: 100%;
+      margin: 0 auto;
+      display: flex;
+      align-items: flex-end;
+      gap: 10px;
+      background: var(--bg-input);
+      border: 1px solid var(--border-primary);
+      border-radius: var(--radius-lg);
+      padding: 6px 6px 6px 16px;
+      transition: border-color var(--transition);
+    }
+    #input-area:focus-within {
+      border-color: var(--border-accent);
     }
     #input-area textarea {
       flex: 1;
-      border: 1px solid #ccc;
-      border-radius: 8px;
-      padding: 10px 14px;
-      font-size: 0.95rem;
+      border: none;
+      background: transparent;
+      color: var(--text-primary);
+      font-size: 0.88rem;
       font-family: inherit;
       resize: none;
-      min-height: 44px;
+      min-height: 36px;
       max-height: 120px;
+      padding: 8px 0;
+      line-height: 1.5;
     }
-    #input-area textarea:focus { outline: none; border-color: #1a1a2e; }
+    #input-area textarea::placeholder { color: var(--text-muted); }
+    #input-area textarea:focus { outline: none; }
     #input-area button {
-      background: #1a1a2e;
-      color: #fff;
-      border: none;
-      border-radius: 8px;
-      padding: 0 24px;
-      font-size: 0.95rem;
+      width: 36px;
+      height: 36px;
+      border-radius: var(--radius-sm);
+      background: var(--accent-dim);
+      border: 1px solid var(--border-primary);
+      color: var(--text-secondary);
       cursor: pointer;
-      transition: background 0.15s;
+      transition: all var(--transition);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
     }
-    #input-area button:hover { background: #2a2a4e; }
-    #input-area button:disabled { background: #999; cursor: not-allowed; }
-
-    .loading-dots::after {
-      content: '';
-      animation: dots 1.4s steps(4, end) infinite;
+    #input-area button:hover {
+      background: var(--accent-hover);
+      color: var(--text-primary);
+      border-color: var(--border-accent);
     }
-    @keyframes dots {
-      0%   { content: ''; }
-      25%  { content: '.'; }
-      50%  { content: '..'; }
-      75%  { content: '...'; }
-      100% { content: ''; }
+    #input-area button:disabled {
+      opacity: 0.3;
+      cursor: not-allowed;
+    }
+    #input-area button svg {
+      width: 16px;
+      height: 16px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
     }
 
     .disclaimer {
+      max-width: 740px;
+      margin: 0 auto;
       text-align: center;
-      font-size: 0.75rem;
-      color: #888;
-      padding: 6px;
+      font-size: 0.68rem;
+      color: var(--text-muted);
+      padding: 8px 0 4px;
+    }
+
+    /* ── Loading animation ── */
+    .loading-indicator {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 0;
+    }
+    .loading-indicator .dot {
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      animation: bounce-dot 1s ease-in-out infinite;
+    }
+    .loading-indicator .dot:nth-child(2) { animation-delay: 0.15s; }
+    .loading-indicator .dot:nth-child(3) { animation-delay: 0.3s; }
+    @keyframes bounce-dot {
+      0%, 100% { opacity: 0.3; transform: translateY(0); }
+      50% { opacity: 1; transform: translateY(-3px); }
+    }
+
+    /* ── Article Sidebar ── */
+    .article-sidebar {
+      width: 0;
+      overflow: hidden;
+      background: var(--bg-secondary);
+      border-left: 1px solid var(--border-primary);
+      transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .article-sidebar.open {
+      width: 420px;
+    }
+    .sidebar-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border-primary);
+      flex-shrink: 0;
+    }
+    .sidebar-header .sidebar-title {
+      font-size: 0.78rem;
+      font-weight: 500;
+      color: var(--text-tertiary);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .sidebar-close {
+      width: 28px;
+      height: 28px;
+      border-radius: var(--radius-sm);
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--text-tertiary);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all var(--transition);
+    }
+    .sidebar-close:hover {
+      background: var(--accent-dim);
+      border-color: var(--border-primary);
+      color: var(--text-primary);
+    }
+    .sidebar-close svg {
+      width: 14px;
+      height: 14px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .sidebar-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px 18px;
+    }
+    .sidebar-content::-webkit-scrollbar { width: 4px; }
+    .sidebar-content::-webkit-scrollbar-track { background: transparent; }
+    .sidebar-content::-webkit-scrollbar-thumb {
+      background: var(--border-accent);
+      border-radius: 4px;
+    }
+
+    .sidebar-article-title {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      line-height: 1.5;
+      margin-bottom: 14px;
+      letter-spacing: -0.01em;
+    }
+    .sidebar-meta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 16px;
+    }
+    .sidebar-meta-tag {
+      font-size: 0.7rem;
+      padding: 4px 8px;
+      background: var(--accent-dim);
+      border: 1px solid var(--border-primary);
+      border-radius: 4px;
+      color: var(--text-tertiary);
+    }
+    .sidebar-section {
+      margin-bottom: 18px;
+    }
+    .sidebar-section-label {
+      font-size: 0.72rem;
+      font-weight: 500;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+    }
+    .sidebar-section-content {
+      font-size: 0.84rem;
+      line-height: 1.6;
+      color: var(--text-secondary);
+    }
+    .sidebar-authors {
+      font-size: 0.78rem;
+      color: var(--text-tertiary);
+      line-height: 1.5;
+    }
+    .sidebar-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 16px;
+      padding: 10px 16px;
+      background: var(--accent-dim);
+      border: 1px solid var(--border-primary);
+      border-radius: var(--radius-md);
+      color: var(--text-primary);
+      text-decoration: none;
+      font-size: 0.82rem;
+      font-weight: 500;
+      transition: all var(--transition);
+    }
+    .sidebar-link:hover {
+      background: var(--accent-hover);
+      border-color: var(--border-accent);
+    }
+    .sidebar-link svg {
+      width: 14px;
+      height: 14px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    /* ── Responsive ── */
+    @media (max-width: 768px) {
+      .article-sidebar.open { width: 100%; position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 200; }
+      .msg { max-width: 95%; }
     }
   </style>
 </head>
 <body>
 
 <header>
-  <div>
+  <div class="header-logo">
+    <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+  </div>
+  <div class="header-text">
     <h1>MediSearch Agent</h1>
     <div class="subtitle">Evidence-based Medical QA</div>
   </div>
+  <div class="header-status">
+    <span class="status-dot"></span>
+    Online
+  </div>
 </header>
 
-<div id="chat-container">
-  <div class="msg system">
-    Ask any medical question. The agent will retrieve evidence from peer-reviewed sources,
-    apply validated clinical tools when relevant, and provide a cited answer.
+<div class="main-layout">
+  <!-- Chat Area -->
+  <div class="chat-area">
+    <div id="chat-container">
+      <div class="msg system">
+        <div class="system-icon">
+          <svg viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        </div>
+        <div class="system-title">Medical Research Assistant</div>
+        Ask any medical question. The agent will retrieve evidence from
+        peer-reviewed sources, apply validated clinical tools when relevant,
+        and provide a cited answer.
+      </div>
+    </div>
+
+    <div class="input-area-wrapper">
+      <div id="input-area">
+        <textarea id="user-input" placeholder="Ask a medical question..." rows="1"></textarea>
+        <button id="send-btn" onclick="sendMessage()">
+          <svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        </button>
+      </div>
+      <div class="disclaimer">
+        This tool provides information only — it is not a substitute for professional medical advice.
+      </div>
+    </div>
+  </div>
+
+  <!-- Article Sidebar -->
+  <div class="article-sidebar" id="article-sidebar">
+    <div class="sidebar-header">
+      <span class="sidebar-title">Source Article</span>
+      <button class="sidebar-close" onclick="closeSidebar()">
+        <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="sidebar-content" id="sidebar-content">
+      <!-- Dynamic article content inserted here -->
+    </div>
   </div>
 </div>
 
-<div id="input-area">
-  <textarea id="user-input" placeholder="Ask a medical question..." rows="1"></textarea>
-  <button id="send-btn" onclick="sendMessage()">Send</button>
-</div>
-<div class="disclaimer">
-  This tool provides information only — it is not a substitute for professional medical advice.
-</div>
+<!-- Citation Tooltip (shared, repositioned on hover) -->
+<div class="citation-tooltip" id="citation-tooltip"></div>
 
 <script>
-  // State
+  // ── State ──
   let conversationId = null;
-  let conversation = []; // alternating user/AI messages
+  let conversation = [];
+  let currentArticles = []; // articles from the latest response
 
   const chatContainer = document.getElementById('chat-container');
   const userInput = document.getElementById('user-input');
   const sendBtn = document.getElementById('send-btn');
+  const articleSidebar = document.getElementById('article-sidebar');
+  const sidebarContent = document.getElementById('sidebar-content');
+  const citationTooltip = document.getElementById('citation-tooltip');
 
-  // Auto-resize textarea
+  // ── Auto-resize textarea ──
   userInput.addEventListener('input', () => {
     userInput.style.height = 'auto';
     userInput.style.height = Math.min(userInput.scrollHeight, 120) + 'px';
@@ -211,26 +781,75 @@
     }
   });
 
+  // ── Add message to chat ──
   function addMessage(html, cls) {
-    const div = document.createElement('div');
-    div.className = 'msg ' + cls;
-    div.innerHTML = html;
-    chatContainer.appendChild(div);
+    if (cls === 'system') {
+      const div = document.createElement('div');
+      div.className = 'msg system';
+      div.innerHTML = html;
+      chatContainer.appendChild(div);
+      chatContainer.scrollTop = chatContainer.scrollHeight;
+      return div;
+    }
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'msg-wrapper ' + cls;
+
+    if (cls === 'assistant') {
+      // Assistant avatar
+      wrapper.innerHTML = `
+        <div class="msg-avatar assistant-avatar">
+          <svg viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        </div>
+        <div class="msg ${cls}">${html}</div>
+      `;
+    } else {
+      // User avatar on right
+      wrapper.innerHTML = `
+        <div class="msg ${cls}">${html}</div>
+        <div class="msg-avatar user-avatar">
+          <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        </div>
+      `;
+    }
+
+    chatContainer.appendChild(wrapper);
     chatContainer.scrollTop = chatContainer.scrollHeight;
-    return div;
+    return wrapper;
   }
 
+  // ── Loading state ──
+  let loadingEl = null;
   function setLoading(on) {
     sendBtn.disabled = on;
     if (on) {
-      sendBtn.textContent = '';
-      sendBtn.classList.add('loading-dots');
+      // Show loading indicator in chat
+      const wrapper = document.createElement('div');
+      wrapper.className = 'msg-wrapper assistant';
+      wrapper.innerHTML = `
+        <div class="msg-avatar assistant-avatar">
+          <svg viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        </div>
+        <div class="msg assistant">
+          <div class="loading-indicator">
+            <div class="dot"></div>
+            <div class="dot"></div>
+            <div class="dot"></div>
+          </div>
+        </div>
+      `;
+      loadingEl = wrapper;
+      chatContainer.appendChild(wrapper);
+      chatContainer.scrollTop = chatContainer.scrollHeight;
     } else {
-      sendBtn.textContent = 'Send';
-      sendBtn.classList.remove('loading-dots');
+      if (loadingEl) {
+        loadingEl.remove();
+        loadingEl = null;
+      }
     }
   }
 
+  // ── Send message ──
   async function sendMessage(text) {
     const msg = text || userInput.value.trim();
     if (!msg) return;
@@ -238,9 +857,10 @@
     userInput.value = '';
     userInput.style.height = 'auto';
 
-    // Add user message to UI
+    // Remove any existing followup chips
+    document.querySelectorAll('.followup-section').forEach(el => el.remove());
+
     addMessage(escapeHtml(msg), 'user');
-    // Add to conversation history
     conversation.push(msg);
 
     setLoading(true);
@@ -258,7 +878,6 @@
       if (!resp.ok) {
         const err = await resp.json();
         addMessage('Error: ' + (err.detail || resp.statusText), 'system');
-        // Remove the message we just added since it failed
         conversation.pop();
         setLoading(false);
         return;
@@ -268,77 +887,67 @@
       conversationId = data.conversation_id;
 
       if (data.type === 'follow_up') {
-        // Agent needs more info — show follow-up questions
         let html = '<strong>I need a few more details:</strong><ul>';
         data.follow_up_questions.forEach(q => {
           html += '<li>' + escapeHtml(q) + '</li>';
         });
         html += '</ul>';
         addMessage(html, 'assistant');
-
-        // Store assistant message in conversation so next user reply continues the thread
         conversation.push(data.follow_up_questions.join(' '));
 
       } else {
-        // Full answer
+        // Store articles for citation linking
+        currentArticles = data.articles || [];
         let html = '';
 
         // Tool results
         if (data.tool_results && data.tool_results.length > 0) {
           data.tool_results.forEach(tr => {
-            html += '<div class="tool-badge"><strong>' + escapeHtml(tr.tool || '') + '</strong>';
-            if (tr.score !== undefined) html += ' &mdash; Score: ' + tr.score;
-            if (tr.risk) html += ' | Risk: ' + escapeHtml(tr.risk);
-            if (tr.recommendation) html += '<br>' + escapeHtml(tr.recommendation);
-            if (tr.ten_year_risk_percent !== undefined) html += '<br>10-year CVD risk: ' + tr.ten_year_risk_percent + '%';
-            if (tr.grade !== undefined) html += ' | Grade: ' + tr.grade + '/5 — ' + escapeHtml(tr.description || '');
+            html += '<div class="tool-badge">';
+            html += '<strong>' + escapeHtml(tr.tool || '') + '</strong>';
+            if (tr.score !== undefined) html += '<div class="tool-score">Score: ' + tr.score + '</div>';
+            if (tr.risk) html += '<div>Risk: ' + escapeHtml(tr.risk) + '</div>';
+            if (tr.recommendation) html += '<div>' + escapeHtml(tr.recommendation) + '</div>';
+            if (tr.ten_year_risk_percent !== undefined) html += '<div>10-year CVD risk: ' + tr.ten_year_risk_percent + '%</div>';
+            if (tr.grade !== undefined) html += '<div>Grade: ' + tr.grade + '/5 — ' + escapeHtml(tr.description || '') + '</div>';
             html += '</div>';
           });
         }
 
-        // Main answer
-        html += '<div class="answer-body">' + renderMarkdown(data.answer || '') + '</div>';
+        // Main answer with citation links
+        const answerHtml = renderAnswerWithCitations(data.answer || '', currentArticles);
+        html += '<div class="answer-body">' + answerHtml + '</div>';
 
-        // Articles
-        if (data.articles && data.articles.length > 0) {
-          html += '<div class="article-list"><strong>Sources:</strong>';
-          data.articles.forEach((art, i) => {
-            html += '<div class="article-item">';
-            html += '[' + (i+1) + '] ';
-            if (art.url) {
-              html += '<a href="' + escapeHtml(art.url) + '" target="_blank">' + escapeHtml(art.title || 'Article') + '</a>';
-            } else {
-              html += escapeHtml(art.title || 'Article');
-            }
-            const meta = [];
-            if (art.year) meta.push(art.year);
-            if (art.journal) meta.push(art.journal);
-            if (art.authors && art.authors.length) meta.push(art.authors.slice(0,3).join(', '));
-            if (meta.length) html += ' <span class="meta">(' + escapeHtml(meta.join(' | ')) + ')</span>';
-            if (art.tldr) html += '<br><em>' + escapeHtml(art.tldr) + '</em>';
+        // Sources section (compact chips below the answer)
+        if (currentArticles.length > 0) {
+          html += '<div class="sources-section">';
+          html += '<div class="sources-label">Sources</div>';
+          html += '<div class="sources-grid">';
+          currentArticles.forEach((art, i) => {
+            const title = art.title || 'Article';
+            const shortTitle = title.length > 50 ? title.substring(0, 50) + '…' : title;
+            html += `<div class="source-chip" onclick="openArticleSidebar(${i})" onmouseenter="showCitationTooltip(event, ${i})" onmouseleave="hideCitationTooltip()">`;
+            html += `<span class="source-num">[${i + 1}]</span>`;
+            html += `<span class="source-title">${escapeHtml(shortTitle)}</span>`;
             html += '</div>';
           });
-          html += '</div>';
+          html += '</div></div>';
         }
 
         addMessage(html, 'assistant');
-
-        // Store assistant answer in conversation for multi-turn
         conversation.push(data.answer || '');
 
         // Follow-up suggestion chips
         if (data.followups && data.followups.length > 0) {
+          const chipSection = document.createElement('div');
+          chipSection.className = 'followup-section';
           let chipHtml = '<div class="followup-chips">';
           data.followups.forEach(q => {
-            chipHtml += '<span class="chip" onclick="sendMessage(\'' + escapeAttr(q) + '\')">' + escapeHtml(q) + '</span>';
+            chipHtml += `<span class="chip" onclick="sendMessage('${escapeAttr(q)}')">${escapeHtml(q)}</span>`;
           });
           chipHtml += '</div>';
-          const chipDiv = document.createElement('div');
-          chipDiv.style.maxWidth = '780px';
-          chipDiv.style.width = '100%';
-          chipDiv.style.margin = '0 auto';
-          chipDiv.innerHTML = chipHtml;
-          chatContainer.appendChild(chipDiv);
+          chipSection.innerHTML = chipHtml;
+          chatContainer.appendChild(chipSection);
           chatContainer.scrollTop = chatContainer.scrollHeight;
         }
       }
@@ -351,7 +960,126 @@
     setLoading(false);
   }
 
-  // Simple markdown-ish rendering (bold, italic, headers, lists, line breaks)
+  // ── Render answer text with clickable citation references ──
+  // Parses [1], [2, 5], [1, 2, 3] etc. and turns them into interactive citation-ref elements
+  function renderAnswerWithCitations(text, articles) {
+    // First, do the markdown rendering
+    let html = renderMarkdown(text);
+
+    // Now replace citation patterns like [1], [2, 5], [1, 2, 3, 4] etc.
+    // Match patterns: [number] or [number, number, ...] — but NOT markdown links like [text](url)
+    html = html.replace(/\[(\d+(?:\s*,\s*\d+)*)\](?!\()/g, function(match, inner) {
+      const nums = inner.split(',').map(s => s.trim()).filter(s => s.length > 0);
+      let result = '';
+      nums.forEach((numStr, idx) => {
+        const num = parseInt(numStr, 10);
+        const artIndex = num - 1; // articles are 0-indexed
+        if (artIndex >= 0 && artIndex < articles.length) {
+          result += `<span class="citation-ref" data-article-index="${artIndex}" onclick="openArticleSidebar(${artIndex})" onmouseenter="showCitationTooltip(event, ${artIndex})" onmouseleave="hideCitationTooltip()">${num}</span>`;
+        } else {
+          result += `<span class="citation-ref">${num}</span>`;
+        }
+        if (idx < nums.length - 1) result += ' ';
+      });
+      return result;
+    });
+
+    return html;
+  }
+
+  // ── Citation Tooltip ──
+  function showCitationTooltip(event, articleIndex) {
+    if (articleIndex < 0 || articleIndex >= currentArticles.length) return;
+    const art = currentArticles[articleIndex];
+
+    let html = '';
+    html += `<div class="tt-title">${escapeHtml(art.title || 'Article')}</div>`;
+
+    const meta = [];
+    if (art.year) meta.push(art.year);
+    if (art.journal) meta.push(art.journal);
+    if (meta.length) html += `<div class="tt-meta">${escapeHtml(meta.join(' · '))}</div>`;
+
+    if (art.tldr) html += `<div class="tt-tldr">${escapeHtml(art.tldr)}</div>`;
+
+    citationTooltip.innerHTML = html;
+
+    // Position tooltip near the hovered element
+    const rect = event.target.getBoundingClientRect();
+    const tooltipWidth = 340;
+    let left = rect.left + rect.width / 2 - tooltipWidth / 2;
+    let top = rect.top - 10;
+
+    // Keep within viewport
+    if (left < 10) left = 10;
+    if (left + tooltipWidth > window.innerWidth - 10) left = window.innerWidth - tooltipWidth - 10;
+
+    citationTooltip.style.left = left + 'px';
+
+    // We need to measure tooltip height first
+    citationTooltip.classList.add('visible');
+    const tooltipHeight = citationTooltip.offsetHeight;
+
+    // Show above if there's room, otherwise below
+    if (top - tooltipHeight > 10) {
+      citationTooltip.style.top = (top - tooltipHeight) + 'px';
+    } else {
+      citationTooltip.style.top = (rect.bottom + 8) + 'px';
+    }
+  }
+
+  function hideCitationTooltip() {
+    citationTooltip.classList.remove('visible');
+  }
+
+  // ── Article Sidebar ──
+  function openArticleSidebar(articleIndex) {
+    if (articleIndex < 0 || articleIndex >= currentArticles.length) return;
+    const art = currentArticles[articleIndex];
+
+    let html = '';
+    html += `<div class="sidebar-article-title">${escapeHtml(art.title || 'Article')}</div>`;
+
+    // Meta tags
+    html += '<div class="sidebar-meta-row">';
+    if (art.year) html += `<span class="sidebar-meta-tag">${escapeHtml(String(art.year))}</span>`;
+    if (art.journal) html += `<span class="sidebar-meta-tag">${escapeHtml(art.journal)}</span>`;
+    html += '</div>';
+
+    // TLDR / Summary
+    if (art.tldr) {
+      html += '<div class="sidebar-section">';
+      html += '<div class="sidebar-section-label">Summary</div>';
+      html += `<div class="sidebar-section-content">${escapeHtml(art.tldr)}</div>`;
+      html += '</div>';
+    }
+
+    // Authors
+    if (art.authors && art.authors.length > 0) {
+      html += '<div class="sidebar-section">';
+      html += '<div class="sidebar-section-label">Authors</div>';
+      html += `<div class="sidebar-authors">${escapeHtml(art.authors.join(', '))}</div>`;
+      html += '</div>';
+    }
+
+    // Link to full article
+    if (art.url) {
+      html += `<a class="sidebar-link" href="${escapeHtml(art.url)}" target="_blank" rel="noopener noreferrer">
+        <svg viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+        View on PubMed
+      </a>`;
+    }
+
+    sidebarContent.innerHTML = html;
+    articleSidebar.classList.add('open');
+    hideCitationTooltip();
+  }
+
+  function closeSidebar() {
+    articleSidebar.classList.remove('open');
+  }
+
+  // ── Markdown rendering ──
   function renderMarkdown(text) {
     let html = escapeHtml(text);
     // Headers
@@ -367,7 +1095,7 @@
     html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
     // Line breaks
     html = html.replace(/\n/g, '<br>');
-    // Clean up double <br> after lists
+    // Clean up
     html = html.replace(/<\/ul><br>/g, '</ul>');
     html = html.replace(/<\/li><br>/g, '</li>');
     return html;

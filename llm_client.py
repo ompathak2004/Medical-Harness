@@ -25,6 +25,9 @@ class GeminiClient:
                 "maxOutputTokens": 4096,
             },
         }
+
+        logger.info("GEMINI REQUEST  | model=%s | prompt=%s", self.model, prompt)
+
         try:
             resp = requests.post(
                 url,
@@ -38,7 +41,11 @@ class GeminiClient:
             if not candidates:
                 raise ValueError("No candidates in Gemini response")
             parts = candidates[0].get("content", {}).get("parts", [])
-            return "".join(p.get("text", "") for p in parts)
+            text = "".join(p.get("text", "") for p in parts)
+
+            logger.info("GEMINI RESPONSE | model=%s | response=%s", self.model, text)
+
+            return text
         except Exception:
             logger.exception("Gemini API call failed")
             raise

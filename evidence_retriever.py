@@ -28,6 +28,12 @@ class EvidenceRetriever:
             "followups": [],
         }
 
+        logger.info(
+            "MEDISEARCH REQUEST  | conversation_id=%s | conversation=%s",
+            conversation_id,
+            conversation,
+        )
+
         try:
             responses = self.client.send_message(
                 conversation=conversation,
@@ -56,5 +62,13 @@ class EvidenceRetriever:
 
         except Exception:
             logger.exception("Medisearch API call failed")
+
+        logger.info(
+            "MEDISEARCH RESPONSE | conversation_id=%s | response=%s | articles_count=%d | followups=%s",
+            conversation_id,
+            result["response"],
+            len(result["articles"]),
+            result["followups"],
+        )
 
         return result
