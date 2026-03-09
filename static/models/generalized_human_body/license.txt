@@ -1,0 +1,11 @@
+Model Information:
+* title:	Generalized Human Body
+* source:	https://sketchfab.com/3d-models/generalized-human-body-ff827a4f988d4ebbb7435e579e72848e
+* author:	tashtego (https://sketchfab.com/tashtego)
+
+Model License:
+* license type:	CC-BY-NC-4.0 (http://creativecommons.org/licenses/by-nc/4.0/)
+* requirements:	Author must be credited. No commercial use.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Generalized Human Body" (https://sketchfab.com/3d-models/generalized-human-body-ff827a4f988d4ebbb7435e579e72848e) by tashtego (https://sketchfab.com/tashtego) licensed under CC-BY-NC-4.0 (http://creativecommons.org/licenses/by-nc/4.0/)

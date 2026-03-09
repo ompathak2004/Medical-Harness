@@ -54,6 +54,7 @@ class ChatResponse(BaseModel):
     tool_results: list[dict]
     followups: list[str]
     conversation_id: str
+    anatomy_context: dict | None = None
 
 
 # --- Routes ---
@@ -94,6 +95,7 @@ async def chat(req: ChatRequest):
         tool_results=result.get("tool_results", []),
         followups=result.get("followups", []),
         conversation_id=conversation_id,
+        anatomy_context=result.get("anatomy_context"),
     )
 
 

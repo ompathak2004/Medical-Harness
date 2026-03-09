@@ -16,6 +16,7 @@ import logging
 from clinical_tools import TOOL_REGISTRY
 from evidence_retriever import EvidenceRetriever
 from llm_client import GeminiClient
+from anatomy_tool import detect_anatomy_context
 
 logger = logging.getLogger(__name__)
 
@@ -171,8 +172,12 @@ class AgentPipeline:
               - "articles": list of article dicts
               - "tool_results": list of tool output dicts
               - "followups": suggested follow-up questions from Medisearch
+              - "anatomy_context": dict or None (body region info for visualization)
         """
         conv_text = self._format_conversation(conversation)
+
+        # --- Anatomy detection (runs alongside triage) ---
+        anatomy_context = self._detect_anatomy(conv_text)
 
         # --- Step 1: Triage ---
         prior_asks = self._count_prior_clarifications(conversation)
@@ -192,6 +197,7 @@ class AgentPipeline:
                     "articles": [],
                     "tool_results": [],
                     "followups": [],
+                    "anatomy_context": anatomy_context,
                 }
 
         # --- Step 2-4: Tool selection, extraction, execution ---
@@ -226,6 +232,7 @@ class AgentPipeline:
             "articles": evidence_result.get("articles", []),
             "tool_results": tool_results,
             "followups": evidence_result.get("followups", []),
+            "anatomy_context": anatomy_context,
         }
 
     def _format_conversation(self, conversation: list[str]) -> str:
@@ -356,6 +363,14 @@ class AgentPipeline:
             evidence_text=evidence_text,
         )
         return self.gemini.generate(prompt)
+
+    def _detect_anatomy(self, conv_text: str) -> dict | None:
+        """Detect if the conversation involves a specific body region."""
+        try:
+            return detect_anatomy_context(conv_text, self.gemini)
+        except Exception:
+            logger.exception("Anatomy detection failed, continuing without it")
+            return None
 
     def _safety_check(self, question: str, answer: str, evidence: dict) -> str:
         articles = evidence.get("articles", [])
