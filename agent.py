@@ -34,12 +34,14 @@ Respond with EXACTLY one JSON object (no markdown fences, no extra text):
 {{
   "action": "ask" or "answer",
   "follow_up_questions": ["question1", "question2"] or [],
+  "preliminary_info": "If action is 'ask', provide 2-4 sentences of helpful preliminary medical information that addresses the patient's question at a general level. Include common causes, initial self-care advice, or relevant medical context. This must be useful standalone even if they never answer your follow-ups. If action is 'answer', leave as empty string.",
   "reasoning": "brief explanation"
 }}
 
 If the patient's question is clear and answerable (even generally), choose "answer".
 Only choose "ask" if critical details are missing that would change the medical advice significantly.
-Limit follow-up questions to at most 3."""
+Limit follow-up questions to at most 3.
+IMPORTANT: When choosing "ask", you MUST still provide useful preliminary_info. Never return only questions without helpful context."""
 
 TOOL_SELECTION_PROMPT = """You are a clinical decision support system. Given the patient conversation below, identify which clinical scoring tools (if any) are relevant.
 
@@ -158,30 +160,37 @@ class AgentPipeline:
 
     def run(self, conversation: list[str], conversation_id: str) -> dict:
         """
-        Execute the full agent pipeline.
+        Execute the full agent pipeline (non-streaming).
 
-        Args:
-            conversation: List of alternating user/AI messages (last is user).
-            conversation_id: Unique conversation thread ID.
+        Internally delegates to run_streaming() and collects the final result.
+        Keeps backward compatibility with the existing /api/chat endpoint
+        and the HealthBench evaluation script.
+        """
+        result = None
+        for event_type, data in self.run_streaming(conversation, conversation_id):
+            if event_type == "result":
+                result = data
+        return result
 
-        Returns:
-            dict with:
-              - "type": "follow_up" or "answer"
-              - "follow_up_questions": list (if type is follow_up)
-              - "answer": str (if type is answer)
-              - "articles": list of article dicts
-              - "tool_results": list of tool output dicts
-              - "followups": suggested follow-up questions from Medisearch
-              - "anatomy_context": dict or None (body region info for visualization)
+    def run_streaming(
+        self, conversation: list[str], conversation_id: str
+    ):
+        """
+        Generator that executes the pipeline and yields progress events.
+
+        Yields:
+            (event_type, data) tuples where event_type is one of:
+              - "step"   : {"step": str, "message": str}  — progress update
+              - "result"  : dict — the final result (same shape as run() return)
         """
         conv_text = self._format_conversation(conversation)
 
-        # --- Anatomy detection (runs alongside triage) ---
+        # --- Anatomy detection + Triage (combined as first visible step) ---
+        yield ("step", {"step": "triage", "message": "Analyzing your question…"})
         anatomy_context = self._detect_anatomy(conv_text)
-
-        # --- Step 1: Triage ---
         prior_asks = self._count_prior_clarifications(conversation)
         triage = self._triage(conv_text)
+
         if triage.get("action") == "ask" and triage.get("follow_up_questions"):
             if prior_asks >= self.MAX_CLARIFICATIONS:
                 logger.info(
@@ -190,20 +199,24 @@ class AgentPipeline:
                     self.MAX_CLARIFICATIONS,
                 )
             else:
-                return {
+                yield ("result", {
                     "type": "follow_up",
                     "follow_up_questions": triage["follow_up_questions"],
+                    "preliminary_info": triage.get("preliminary_info", ""),
                     "answer": None,
                     "articles": [],
                     "tool_results": [],
                     "followups": [],
                     "anatomy_context": anatomy_context,
-                }
+                })
+                return
 
-        # --- Step 2-4: Tool selection, extraction, execution ---
+        # --- Tool selection, extraction, execution ---
+        yield ("step", {"step": "tools", "message": "Checking clinical calculators…"})
         tool_results = self._run_tools(conv_text)
 
-        # --- Step 5: Evidence retrieval ---
+        # --- Evidence retrieval ---
+        yield ("step", {"step": "evidence", "message": "Searching medical literature…"})
         logger.info("Starting evidence retrieval via MediSearch")
         evidence_result = self.evidence.search(
             conversation=conversation,
@@ -215,17 +228,19 @@ class AgentPipeline:
             len(evidence_result.get("response", "")),
         )
 
-        # --- Step 6: Answer generation ---
+        # --- Answer generation ---
+        yield ("step", {"step": "generating", "message": "Generating evidence-based answer…"})
         question = conversation[-1]
         logger.info("Generating answer for question: %s", question[:200])
         answer = self._generate_answer(question, tool_results, evidence_result)
         logger.info("Answer generated, length=%d", len(answer))
 
-        # --- Step 7: Safety check ---
+        # --- Safety check ---
+        yield ("step", {"step": "safety", "message": "Verifying answer safety…"})
         logger.info("Running safety check")
         answer = self._safety_check(question, answer, evidence_result)
 
-        return {
+        yield ("result", {
             "type": "answer",
             "follow_up_questions": [],
             "answer": answer,
@@ -233,7 +248,7 @@ class AgentPipeline:
             "tool_results": tool_results,
             "followups": evidence_result.get("followups", []),
             "anatomy_context": anatomy_context,
-        }
+        })
 
     def _format_conversation(self, conversation: list[str]) -> str:
         lines = []

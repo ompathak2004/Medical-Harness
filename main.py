@@ -2,6 +2,7 @@
 FastAPI application — serves the agent pipeline and the frontend.
 """
 
+import json
 import os
 import uuid
 import logging
@@ -9,7 +10,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -49,6 +50,7 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     type: str  # "follow_up" or "answer"
     follow_up_questions: list[str]
+    preliminary_info: str = ""  # preliminary advice when type is follow_up
     answer: str | None
     articles: list[dict]
     tool_results: list[dict]
@@ -90,6 +92,7 @@ async def chat(req: ChatRequest):
     return ChatResponse(
         type=result["type"],
         follow_up_questions=result.get("follow_up_questions", []),
+        preliminary_info=result.get("preliminary_info", ""),
         answer=result.get("answer"),
         articles=result.get("articles", []),
         tool_results=result.get("tool_results", []),
@@ -97,6 +100,48 @@ async def chat(req: ChatRequest):
         conversation_id=conversation_id,
         anatomy_context=result.get("anatomy_context"),
     )
+
+
+@app.post("/api/chat/stream")
+async def chat_stream(req: ChatRequest):
+    """SSE streaming endpoint — same pipeline, real-time progress events."""
+    conversation_id = req.conversation_id or str(uuid.uuid4())
+
+    if not req.conversation or len(req.conversation) == 0:
+        return JSONResponse(
+            status_code=400,
+            content={"detail": "Conversation must have at least one message."},
+        )
+
+    if len(req.conversation) % 2 == 0:
+        return JSONResponse(
+            status_code=400,
+            content={"detail": "Last message in conversation must be from the user."},
+        )
+
+    def event_generator():
+        """Sync generator — Starlette runs each next() in a threadpool."""
+        yield _sse("meta", {"conversation_id": conversation_id})
+        try:
+            for event_type, data in pipeline.run_streaming(
+                conversation=req.conversation,
+                conversation_id=conversation_id,
+            ):
+                yield _sse(event_type, data)
+        except Exception as e:
+            logger.exception("Streaming pipeline error")
+            yield _sse("error", {"detail": str(e)})
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+def _sse(event: str, data: dict) -> str:
+    """Format a single SSE event string."""
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
 @app.get("/api/health")

@@ -244,6 +244,49 @@ def compute_mrc_grade(data: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# 5. BMI Calculator
+#    Reference: WHO weight classification standards.
+# ---------------------------------------------------------------------------
+
+def compute_bmi(data: dict) -> dict:
+    """Compute Body Mass Index and classify weight category."""
+    weight = float(data.get("weight_kg", 70))
+    height_cm = float(data.get("height_cm", 170))
+    height_m = height_cm / 100
+
+    if height_m <= 0:
+        return {"tool": "BMI Calculator", "error": "Invalid height."}
+
+    bmi = round(weight / (height_m ** 2), 1)
+
+    if bmi < 18.5:
+        category = "Underweight"
+        recommendation = "A BMI under 18.5 suggests underweight. Consider consulting a healthcare provider about nutrition."
+    elif bmi < 25:
+        category = "Normal weight"
+        recommendation = "A BMI of 18.5\u201324.9 is considered normal. Maintain a balanced diet and regular exercise."
+    elif bmi < 30:
+        category = "Overweight"
+        recommendation = "A BMI of 25\u201329.9 indicates overweight. Consider lifestyle modifications including diet and exercise."
+    elif bmi < 35:
+        category = "Obese (Class I)"
+        recommendation = "A BMI of 30\u201334.9 indicates Class I obesity. Consult a healthcare provider about a management plan."
+    elif bmi < 40:
+        category = "Obese (Class II)"
+        recommendation = "A BMI of 35\u201339.9 indicates Class II obesity. Medical consultation is recommended."
+    else:
+        category = "Obese (Class III)"
+        recommendation = "A BMI of 40+ indicates Class III obesity. Seek medical consultation for a comprehensive plan."
+
+    return {
+        "tool": "BMI Calculator",
+        "bmi": bmi,
+        "category": category,
+        "recommendation": recommendation,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Tool Registry
 # ---------------------------------------------------------------------------
 
@@ -279,5 +322,10 @@ TOOL_REGISTRY = {
         "description": "MRC muscle strength grading (0-5 scale). Use when assessing muscle weakness or neurological symptoms affecting strength.",
         "variables": ["grade"],
         "function": compute_mrc_grade,
+    },
+    "bmi": {
+        "description": "Body Mass Index (BMI) calculator. Use when a patient mentions their weight and height, or asks about weight categories, obesity, or underweight concerns.",
+        "variables": ["weight_kg", "height_cm"],
+        "function": compute_bmi,
     },
 }
