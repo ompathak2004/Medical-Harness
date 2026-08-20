@@ -7,8 +7,9 @@ discussed, then returns the region ID and relevant sub-parts so the
 frontend can highlight the correct area on the body map.
 """
 
-import json
 import logging
+
+from app.json_utils import parse_json_response
 
 logger = logging.getLogger(__name__)
 
@@ -241,16 +242,16 @@ ANATOMY_REGIONS = {
 
 
 # ---------------------------------------------------------------------------
-# Prompt for anatomy detection
+# Prompt for anatomy detection.
+# The system message is fully static (region list comes from the static
+# ANATOMY_REGIONS registry and is formatted once at import time) so Cerebras
+# prefix caching can reuse it; only the conversation is sent per request.
 # ---------------------------------------------------------------------------
 
-ANATOMY_DETECT_PROMPT = """You are an anatomy detection assistant. Analyze the patient conversation below and determine if a specific body region is being discussed.
+ANATOMY_DETECT_SYSTEM_TEMPLATE = """You are an anatomy detection assistant. Analyze the patient conversation and determine if a specific body region is being discussed.
 
 Available body regions (use these exact keys):
 {region_list}
-
-Conversation:
-{conversation}
 
 Respond with EXACTLY one JSON object (no markdown fences, no extra text):
 {{
@@ -269,14 +270,25 @@ Rules:
 - For general questions (like "what is diabetes?"), set has_anatomy to false.
 - The location_question should help pinpoint the EXACT spot within the body region (e.g., "Is the pain in the inner or outer part of your calf?")."""
 
+# Formatted once with the static region registry — byte-identical across
+# requests, which is what Cerebras exact-prefix caching needs.
+ANATOMY_DETECT_SYSTEM = ANATOMY_DETECT_SYSTEM_TEMPLATE.format(
+    region_list="\n".join(
+        f"  - {key}: {info['label']}" for key, info in ANATOMY_REGIONS.items()
+    )
+)
 
-def detect_anatomy_context(conv_text: str, gemini_client) -> dict | None:
+ANATOMY_DETECT_USER = """Conversation:
+{conversation}"""
+
+
+async def detect_anatomy_context(conv_text: str, llm_client) -> dict | None:
     """
     Analyze conversation to detect if an anatomical body region is being discussed.
 
     Args:
         conv_text: Formatted conversation text.
-        gemini_client: GeminiClient instance for LLM calls.
+        llm_client: LLM client with an async ``generate(user, system=None) -> str`` method.
 
     Returns:
         dict with anatomy context, or None if no anatomy detected.
@@ -287,28 +299,12 @@ def detect_anatomy_context(conv_text: str, gemini_client) -> dict | None:
             "location_question": "..."
         }
     """
-    # Build the region list for the prompt
-    region_lines = []
-    for key, info in ANATOMY_REGIONS.items():
-        region_lines.append(f"  - {key}: {info['label']}")
-    region_list_text = "\n".join(region_lines)
-
-    prompt = ANATOMY_DETECT_PROMPT.format(
-        region_list=region_list_text,
-        conversation=conv_text,
-    )
-
     try:
-        raw = gemini_client.generate(prompt)
-        # Parse JSON response
-        cleaned = raw.strip()
-        if cleaned.startswith("```"):
-            first_newline = cleaned.index("\n")
-            cleaned = cleaned[first_newline + 1:]
-            if cleaned.endswith("```"):
-                cleaned = cleaned[:-3]
-            cleaned = cleaned.strip()
-        result = json.loads(cleaned)
+        raw = await llm_client.generate(
+            ANATOMY_DETECT_USER.format(conversation=conv_text),
+            system=ANATOMY_DETECT_SYSTEM,
+        )
+        result = parse_json_response(raw)
 
         if not result.get("has_anatomy"):
             logger.info("No anatomy context detected")
@@ -343,7 +339,11 @@ def detect_anatomy_context(conv_text: str, gemini_client) -> dict | None:
             "primary_region": primary,
             "location_question": result.get("location_question"),
         }
-        logger.info("Anatomy context detected: %s", anatomy_context)
+        logger.info(
+            "Anatomy context detected: primary=%s regions=%d",
+            result.get("primary_region"),
+            len(regions),
+        )
         return anatomy_context
 
     except Exception:

@@ -1,0 +1,214 @@
+/* ============================================================================
+   ANATOMY PANEL — 3D body map drawer (desktop right-hand panel / mobile sheet)
+   ============================================================================ */
+
+.anatomy-panel {
+  width: 0; overflow: hidden;
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border-subtle);
+  transition: width var(--dur-slow) var(--ease);
+  flex-shrink: 0;
+  display: flex; flex-direction: column;
+  position: relative;
+}
+.anatomy-panel.open { width: 440px; }
+
+.drawer-handle {
+  display: none; width: 40px; height: 4px; border-radius: 3px;
+  background: var(--border-strong); margin: 9px auto 2px; flex-shrink: 0;
+}
+
+.anatomy-topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; border-bottom: 1px solid var(--border-subtle); flex-shrink: 0;
+  gap: 8px;
+}
+.anatomy-topbar-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.anatomy-topbar-title svg { width: 15px; height: 15px; stroke: var(--brand); fill: none; stroke-width: 1.8; flex-shrink: 0; }
+.anatomy-region-pill {
+  font-size: .68rem; font-weight: 600; color: var(--brand-strong);
+  background: var(--brand-soft); border: 1px solid rgba(var(--brand-rgb), .25);
+  border-radius: var(--radius-pill); padding: 3px 9px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; max-width: 160px;
+}
+
+/* Layer tabs */
+.anatomy-layer-bar { display: flex; gap: 4px; padding: 10px 14px; border-bottom: 1px solid var(--border-subtle); flex-shrink: 0; }
+.layer-btn {
+  flex: 1; padding: 7px 4px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle); background: var(--bg-surface-alt);
+  color: var(--text-tertiary); font-size: .68rem; font-weight: 600; font-family: inherit;
+  cursor: pointer; transition: all var(--dur-fast) var(--ease); text-align: center;
+  white-space: nowrap;
+}
+.layer-btn:hover { background: var(--bg-hover); color: var(--text-secondary); border-color: var(--border-default); }
+.layer-btn.active { background: var(--brand); border-color: var(--brand); color: var(--text-on-brand); }
+
+/* View controls */
+.anatomy-view-bar { display: flex; align-items: center; gap: 4px; padding: 8px 14px; border-bottom: 1px solid var(--border-subtle); flex-shrink: 0; }
+.anatomy-view-bar .view-label { font-size: .66rem; color: var(--text-muted); margin-right: 2px; text-transform: uppercase; letter-spacing: .04em; }
+.view-btn {
+  padding: 5px 10px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle); background: transparent;
+  color: var(--text-tertiary); font-size: .7rem; font-family: inherit;
+  cursor: pointer; transition: all var(--dur-fast) var(--ease);
+}
+.view-btn:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--border-default); }
+.view-btn.reset { margin-left: auto; color: var(--text-muted); }
+.view-btn.reset svg { width: 12px; height: 12px; stroke: currentColor; fill: none; stroke-width: 2; vertical-align: -1px; }
+
+/* Canvas */
+.anatomy-canvas-wrap {
+  flex: 1; min-height: 160px; position: relative; overflow: hidden;
+  background: radial-gradient(ellipse at 50% 30%, var(--bg-surface-alt) 0%, var(--bg-app) 100%);
+}
+.anatomy-canvas-wrap canvas { display: block; width: 100% !important; height: 100% !important; touch-action: none; }
+
+.anatomy-canvas-hint {
+  position: absolute; top: 10px; right: 10px;
+  font-size: .64rem; color: var(--text-muted); background: var(--bg-raised);
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);
+  padding: 4px 8px; pointer-events: none; opacity: .85;
+}
+
+.anatomy-loading {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 10px;
+  color: var(--text-tertiary); font-size: .78rem; background: var(--bg-app);
+  transition: opacity var(--dur-slow) var(--ease);
+}
+.anatomy-loading .spin-ring {
+  width: 26px; height: 26px; border-radius: 50%;
+  border: 3px solid var(--border-default); border-top-color: var(--brand);
+  animation: spin .9s linear infinite;
+}
+.anatomy-loading.hidden { opacity: 0; pointer-events: none; }
+
+.anatomy-fallback {
+  position: absolute; inset: 0; display: none; flex-direction: column; align-items: center;
+  justify-content: center; text-align: center; gap: 10px; padding: 30px;
+  color: var(--text-tertiary); background: var(--bg-app);
+}
+.anatomy-fallback.visible { display: flex; }
+.anatomy-fallback svg { width: 34px; height: 34px; stroke: var(--text-muted); fill: none; stroke-width: 1.5; }
+.anatomy-fallback-title { font-size: .86rem; font-weight: 600; color: var(--text-secondary); }
+.anatomy-fallback-text { font-size: .78rem; line-height: 1.5; max-width: 280px; }
+
+/* Hover label floating on the canvas */
+.anatomy-hover-label {
+  position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%);
+  background: var(--bg-raised); border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm); padding: 5px 13px; font-size: .74rem;
+  color: var(--text-primary); pointer-events: none; white-space: nowrap;
+  opacity: 0; transition: opacity var(--dur-fast) var(--ease); box-shadow: var(--shadow-sm);
+  font-weight: 500;
+}
+.anatomy-hover-label.visible { opacity: 1; }
+
+/* Region info panel (bottom) */
+.anatomy-info {
+  flex-shrink: 0; border-top: 1px solid var(--border-subtle);
+  padding: 13px 15px; max-height: 230px; overflow-y: auto;
+  background: var(--bg-surface-alt);
+}
+.anatomy-info-empty {
+  font-size: .8rem; color: var(--text-muted); text-align: center; padding: 10px 0;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+}
+.anatomy-info-empty svg { width: 20px; height: 20px; stroke: var(--text-muted); fill: none; stroke-width: 1.5; opacity: .7; }
+
+.anatomy-region-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; gap: 8px; }
+.anatomy-region-name { font-size: .9rem; font-weight: 700; color: var(--text-primary); }
+.anatomy-region-badge {
+  font-size: .66rem; font-weight: 600; padding: 3px 9px; background: var(--brand-soft);
+  border: 1px solid rgba(var(--brand-rgb), .25); border-radius: var(--radius-pill); color: var(--brand-strong);
+  text-transform: capitalize; white-space: nowrap;
+}
+.anatomy-subparts-label { font-size: .68rem; color: var(--text-muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .05em; }
+.anatomy-subparts { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
+.anatomy-subpart {
+  padding: 6px 12px; border-radius: var(--radius-pill);
+  background: var(--bg-surface); border: 1px solid var(--border-default);
+  color: var(--text-secondary); font-size: .74rem; font-family: inherit; cursor: pointer;
+  transition: all var(--dur-fast) var(--ease);
+}
+.anatomy-subpart:hover { background: var(--brand-soft); border-color: var(--brand); color: var(--brand-strong); }
+.anatomy-confirm-btn {
+  margin-top: 12px; width: 100%; padding: 10px 0; border-radius: var(--radius-md);
+  background: var(--brand); border: none; color: var(--text-on-brand);
+  font-size: .82rem; font-weight: 600; font-family: inherit;
+  cursor: pointer; transition: all var(--dur-fast) var(--ease);
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+}
+.anatomy-confirm-btn:hover { background: var(--brand-strong); }
+.anatomy-confirm-btn svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 2; }
+
+/* Toggle button embedded in chat messages */
+.anatomy-toggle-btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  background: var(--brand-soft); border: 1px solid rgba(var(--brand-rgb), .3);
+  border-radius: var(--radius-md); padding: 8px 14px;
+  font-size: .8rem; font-weight: 600; color: var(--brand-strong); cursor: pointer;
+  transition: all var(--dur-fast) var(--ease); font-family: inherit; margin: 8px 0 2px;
+}
+.anatomy-toggle-btn:hover { background: var(--brand); color: var(--text-on-brand); }
+.anatomy-toggle-btn svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.6; }
+
+@media (max-width: 768px) {
+  .anatomy-canvas-wrap { min-height: 220px; }
+}
+
+/* ── Structure search ──────────────────────────────────────────────────── */
+.anatomy-search {
+  position: relative; display: flex; align-items: center; gap: 8px;
+  margin: 10px 16px 0; padding: 8px 12px;
+  background: var(--bg-surface); border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+}
+.anatomy-search svg {
+  width: 14px; height: 14px; flex: none;
+  stroke: var(--text-tertiary); fill: none; stroke-width: 2;
+}
+.anatomy-search input {
+  flex: 1; min-width: 0; border: none; background: transparent; outline: none;
+  color: var(--text-primary); font-size: .8rem; font-family: inherit;
+}
+.anatomy-search input::placeholder { color: var(--text-tertiary); }
+.anatomy-search-results {
+  position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 30;
+  max-height: 280px; overflow-y: auto;
+  background: var(--bg-elevated, var(--bg-surface));
+  border: 1px solid var(--border-default); border-radius: var(--radius-md);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .25);
+}
+.anatomy-search-item {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  width: 100%; padding: 8px 12px; border: none; background: transparent;
+  cursor: pointer; font-family: inherit; text-align: left;
+}
+.anatomy-search-item:hover { background: var(--brand-soft); }
+.anatomy-search-name { font-size: .8rem; font-weight: 600; color: var(--text-primary); }
+.anatomy-search-meta { font-size: .68rem; color: var(--text-tertiary); text-transform: capitalize; }
+
+/* ── Breadcrumb ────────────────────────────────────────────────────────── */
+.anatomy-breadcrumb {
+  display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
+  margin: 8px 16px 0; font-size: .72rem; color: var(--text-secondary);
+}
+.anatomy-breadcrumb span:last-child { color: var(--brand-strong); font-weight: 600; }
+.anatomy-breadcrumb svg {
+  width: 11px; height: 11px; stroke: var(--text-tertiary); fill: none; stroke-width: 2;
+}
+
+/* ── Structure meta line in info panel ─────────────────────────────────── */
+.anatomy-structure-meta {
+  margin-top: 4px; font-size: .74rem; color: var(--text-secondary);
+}
+
+/* ── Attribution footer ────────────────────────────────────────────────── */
+.anatomy-attribution {
+  margin: 4px 16px 12px; font-size: .64rem; line-height: 1.5;
+  color: var(--text-tertiary);
+}
+.anatomy-attribution a { color: var(--text-secondary); text-decoration: underline; }
+.anatomy-attribution a:hover { color: var(--brand-strong); }

@@ -1,0 +1,33 @@
+# DigitalOcean App Platform spec for MediSearch Agent.
+# Deploy: doctl apps create --spec deploy/app-spec.yaml
+# Secrets are provided as encrypted env vars at deploy time — never commit values.
+name: medisearch-agent
+region: blr
+services:
+  - name: web
+    image:
+      registry_type: DOCR
+      repository: medisearch-agent
+      tag: latest
+    instance_size_slug: basic-xxs
+    instance_count: 1
+    http_port: 8080
+    health_check:
+      http_path: /api/health
+      initial_delay_seconds: 10
+      period_seconds: 30
+    envs:
+      - key: CEREBRAS_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+        value: ""
+      - key: MEDISEARCH_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+        value: ""
+      - key: CEREBRAS_MODEL
+        scope: RUN_TIME
+        value: gpt-oss-120b
+      - key: LOG_LEVEL
+        scope: RUN_TIME
+        value: INFO

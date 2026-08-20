@@ -1,802 +1,673 @@
 /**
- * AnatomyViewer v4 — Improved Human Anatomy for Medical AI Agent
+ * AnatomyViewer — real human anatomy viewer for a medical AI agent.
  *
- * Key upgrades over v3:
- *  - CapsuleGeometry limbs (smooth, no visible segments)
- *  - LatheGeometry torso with realistic waist/chest profile
- *  - Warm skin material + fake subsurface scattering via emissive
- *  - Proper 7.5-head-height proportions
- *  - Transparent skin mode when switching to muscle/skeleton/vascular
- *  - Per-region invisible hit-box layer for reliable click/hover
- *  - Glowing region overlay on hover + pulse on highlight
- *  - Front / Back / Left / Right / Reset view helpers
+ * Data: BodyParts3D 4.0 (© The Database Center for Life Science, CC-BY-4.0),
+ * preprocessed into six meshopt-compressed GLB layers plus structures.json
+ * (2,000+ named structures with layer / body-region / clinical-group
+ * metadata) by scripts/build_anatomy_assets.py.
+ *
+ * Capabilities:
+ *  - Progressive loading: skin + skeleton up front, other layers lazy.
+ *  - Granular raycast picking down to a single muscle / bone / organ /
+ *    vessel, with hover labels and structure selection.
+ *  - Region highlight + eased camera focus driven by the backend's
+ *    27 body-region ids (app/tools/anatomy.py ANATOMY_REGIONS).
+ *  - Name search over all structures (used by the panel search box).
+ *  - Layer system: skin / muscles / skeleton / organs / vascular /
+ *    nerves / all, with ghosted skin for depth context.
+ *
+ * Public API (consumed by app.js — keep stable):
+ *   isWebGLAvailable(), REGIONS,
+ *   new AnatomyViewer(container, { accentColor, reducedMotion })
+ *     .onHover(cb) .onSelect(cb) .highlight(regionIds) .focusRegion(id)
+ *     .setLayer(name) .setView(name) .resetCamera() .resize()
+ *     .search(query) .selectStructure(id) .ready (Promise)
  */
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 
-// ──────────────────────────────────────────────────────────────────────────────
-// MATERIALS
-// ──────────────────────────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────────
+// WEBGL AVAILABILITY
+// ──────────────────────────────────────────────────────────────────────────
 
-function mkSkin() {
-  return new THREE.MeshStandardMaterial({
-    color: 0xD4956A,
-    roughness: 0.88,
-    metalness: 0.0,
-    emissive: new THREE.Color(0.12, 0.04, 0.015),
-    emissiveIntensity: 0.35,
-  });
-}
-
-function mkMuscle(secondary = false) {
-  return new THREE.MeshStandardMaterial({
-    color: secondary ? 0x8B1A1A : 0xB83232,
-    roughness: 0.58,
-    metalness: 0.02,
-  });
-}
-
-function mkTendon() {
-  return new THREE.MeshStandardMaterial({ color: 0xD4C8B0, roughness: 0.45 });
-}
-
-function mkBone() {
-  return new THREE.MeshStandardMaterial({
-    color: 0xEDE0C4,
-    roughness: 0.32,
-    metalness: 0.08,
-  });
-}
-
-function mkVessel(artery = true) {
-  return new THREE.MeshStandardMaterial({
-    color: artery ? 0xCC2222 : 0x2244BB,
-    roughness: 0.28,
-    metalness: 0.12,
-    transparent: true,
-    opacity: 0.9,
-  });
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// GEO HELPERS
-// ──────────────────────────────────────────────────────────────────────────────
-
-/** Capsule for smooth limbs */
-function cap(r, h, seg = 14) {
-  return new THREE.CapsuleGeometry(r, h, 4, seg);
-}
-
-/** Spindle muscle shape */
-function spindle(len, maxR, tS = 0.18, tE = 0.82, segs = 14) {
-  const pts = [];
-  for (let i = 0; i <= segs; i++) {
-    const t = i / segs;
-    let r;
-    if (t < tS)      r = maxR * 0.09 + maxR * 0.14 * (t / tS);
-    else if (t > tE) r = maxR * 0.09 + maxR * 0.14 * ((1 - t) / (1 - tE));
-    else {
-      const bt = (t - tS) / (tE - tS);
-      r = maxR * (0.62 + 0.38 * Math.sin(bt * Math.PI));
-    }
-    pts.push(new THREE.Vector2(Math.max(r, 0.01), (t - 0.5) * len));
+export function isWebGLAvailable() {
+  try {
+    const canvas = document.createElement('canvas');
+    return !!(
+      window.WebGLRenderingContext &&
+      (canvas.getContext('webgl2') || canvas.getContext('webgl'))
+    );
+  } catch {
+    return false;
   }
-  return new THREE.LatheGeometry(pts, 10);
 }
 
-/** Long bone with flared epiphyses */
-function longBone(len, shaftR, endR, segs = 12) {
-  const pts = [];
-  for (let i = 0; i <= segs; i++) {
-    const t = i / segs, j = 0.16;
-    let r;
-    if (t < j)       r = endR * (0.55 + 0.45 * (t / j));
-    else if (t > 1 - j) r = endR * (0.55 + 0.45 * ((1 - t) / j));
-    else if (t < j + 0.1) r = endR - (endR - shaftR) * ((t - j) / 0.1);
-    else if (t > 1 - j - 0.1) r = shaftR + (endR - shaftR) * ((t - (1 - j - 0.1)) / 0.1);
-    else r = shaftR;
-    pts.push(new THREE.Vector2(Math.max(r, 0.01), (t - 0.5) * len));
-  }
-  return new THREE.LatheGeometry(pts, 7);
-}
+// ──────────────────────────────────────────────────────────────────────────
+// REGIONS — the 27 backend body-region ids (labels used across the app)
+// Geometry (centers/bounds) is derived at runtime from structures.json.
+// ──────────────────────────────────────────────────────────────────────────
 
-/** Tube from array of [x,y,z] points */
-function tubePath(pts, r, tSeg = 18, rSeg = 6) {
-  const curve = new THREE.CatmullRomCurve3(pts.map(([x, y, z]) => new THREE.Vector3(x, y, z)));
-  return new THREE.TubeGeometry(curve, tSeg, r, rSeg, false);
-}
-
-/** Add mesh to group */
-function addMesh(grp, geo, mat, pos, rot, scale, ud = {}) {
-  const m = new THREE.Mesh(geo, mat.clone ? mat.clone() : mat);
-  if (pos)   m.position.set(...pos);
-  if (rot)   m.rotation.set(...rot);
-  if (scale) m.scale.set(...scale);
-  m.userData = ud;
-  m.castShadow = true;
-  m.receiveShadow = true;
-  grp.add(m);
-  return m;
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// BODY REGION MAP  (label, yMin/yMax, xMin/xMax for hit boxes)
-// ──────────────────────────────────────────────────────────────────────────────
-
-const REGIONS = {
-  head:             { label: 'Head',             y: [7.0, 9.2],  x: [-1.5, 1.5]  },
-  neck:             { label: 'Neck',             y: [6.1, 7.0],  x: [-0.8, 0.8]  },
-  chest:            { label: 'Chest',            y: [3.2, 6.1],  x: [-2.4, 2.4]  },
-  upper_back:       { label: 'Upper Back',       y: [3.2, 6.1],  x: [-2.4, 2.4]  },
-  abdomen:          { label: 'Abdomen',          y: [0.0, 3.2],  x: [-1.9, 1.9]  },
-  lower_back:       { label: 'Lower Back',       y: [0.0, 2.5],  x: [-1.7, 1.7]  },
-  hip:              { label: 'Hip / Pelvis',     y: [-2.0, 0.0], x: [-2.5, 2.5]  },
-  left_shoulder:    { label: 'Left Shoulder',    y: [4.5, 6.1],  x: [-4.0, -1.5] },
-  right_shoulder:   { label: 'Right Shoulder',   y: [4.5, 6.1],  x: [1.5, 4.0]   },
-  left_upper_arm:   { label: 'Left Upper Arm',   y: [1.5, 4.5],  x: [-4.1, -2.8] },
-  right_upper_arm:  { label: 'Right Upper Arm',  y: [1.5, 4.5],  x: [2.8, 4.1]   },
-  left_elbow:       { label: 'Left Elbow',       y: [0.8, 1.5],  x: [-4.1, -2.8] },
-  right_elbow:      { label: 'Right Elbow',      y: [0.8, 1.5],  x: [2.8, 4.1]   },
-  left_forearm:     { label: 'Left Forearm',     y: [-1.8, 0.8], x: [-4.1, -2.8] },
-  right_forearm:    { label: 'Right Forearm',    y: [-1.8, 0.8], x: [2.8, 4.1]   },
-  left_hand:        { label: 'Left Hand',        y: [-3.2, -1.8],x: [-4.1, -2.8] },
-  right_hand:       { label: 'Right Hand',       y: [-3.2, -1.8],x: [2.8, 4.1]   },
-  left_thigh:       { label: 'Left Thigh',       y: [-5.5, -2.0],x: [-2.0, 0.0]  },
-  right_thigh:      { label: 'Right Thigh',      y: [-5.5, -2.0],x: [0.0, 2.0]   },
-  left_knee:        { label: 'Left Knee',        y: [-6.2, -5.5],x: [-1.8, 0.0]  },
-  right_knee:       { label: 'Right Knee',       y: [-6.2, -5.5],x: [0.0, 1.8]   },
-  left_lower_leg:   { label: 'Left Lower Leg',   y: [-8.8, -6.2],x: [-1.8, 0.0]  },
-  right_lower_leg:  { label: 'Right Lower Leg',  y: [-8.8, -6.2],x: [0.0, 1.8]   },
-  left_ankle:       { label: 'Left Ankle',       y: [-9.2, -8.8],x: [-1.5, 0.0]  },
-  right_ankle:      { label: 'Right Ankle',      y: [-9.2, -8.8],x: [0.0, 1.5]   },
-  left_foot:        { label: 'Left Foot',        y: [-9.5, -9.0],x: [-1.5, 0.0]  },
-  right_foot:       { label: 'Right Foot',       y: [-9.5, -9.0],x: [0.0, 1.5]   },
+export const REGIONS = {
+  head: { label: 'Head' },
+  neck: { label: 'Neck' },
+  chest: { label: 'Chest' },
+  upper_back: { label: 'Upper Back' },
+  abdomen: { label: 'Abdomen' },
+  lower_back: { label: 'Lower Back' },
+  hip: { label: 'Hip / Pelvis' },
+  left_shoulder: { label: 'Left Shoulder' },
+  right_shoulder: { label: 'Right Shoulder' },
+  left_upper_arm: { label: 'Left Upper Arm' },
+  right_upper_arm: { label: 'Right Upper Arm' },
+  left_elbow: { label: 'Left Elbow' },
+  right_elbow: { label: 'Right Elbow' },
+  left_forearm: { label: 'Left Forearm' },
+  right_forearm: { label: 'Right Forearm' },
+  left_hand: { label: 'Left Hand' },
+  right_hand: { label: 'Right Hand' },
+  left_thigh: { label: 'Left Thigh' },
+  right_thigh: { label: 'Right Thigh' },
+  left_knee: { label: 'Left Knee' },
+  right_knee: { label: 'Right Knee' },
+  left_lower_leg: { label: 'Left Lower Leg' },
+  right_lower_leg: { label: 'Right Lower Leg' },
+  left_ankle: { label: 'Left Ankle' },
+  right_ankle: { label: 'Right Ankle' },
+  left_foot: { label: 'Left Foot' },
+  right_foot: { label: 'Right Foot' },
 };
 
-// ──────────────────────────────────────────────────────────────────────────────
-// ANATOMY VIEWER CLASS
-// ──────────────────────────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────────
+// LAYERS & MATERIALS
+// ──────────────────────────────────────────────────────────────────────────
 
-class AnatomyViewer {
-  constructor(container) {
+const ASSET_BASE = '/static/assets/anatomy';
+
+const LAYERS = {
+  skin: { files: ['skin.glb'], color: 0xd9a184, roughness: 0.6 },
+  skeleton: { files: ['skeleton.glb'], color: 0xe8e3d5, roughness: 0.55 },
+  muscles: { files: ['muscles.glb', 'muscles_extra.glb'], color: 0xb5493f, roughness: 0.5 },
+  organs: { files: ['organs.glb'], color: 0xc4756a, roughness: 0.45 },
+  vascular: { files: ['vascular.glb'], color: 0xa03030, roughness: 0.4 },
+  nerves: { files: ['nerves.glb'], color: 0xd8c94a, roughness: 0.5 },
+};
+
+const LAYER_ORDER = ['skin', 'skeleton', 'muscles', 'organs', 'vascular', 'nerves'];
+
+function makeLayerMaterial(name) {
+  const cfg = LAYERS[name];
+  const mat = new THREE.MeshStandardMaterial({
+    color: cfg.color,
+    roughness: cfg.roughness,
+    metalness: 0.0,
+    envMapIntensity: 0.7,
+  });
+  if (name === 'skin') {
+    mat.transparent = true; // enables ghost mode without material swap
+    mat.opacity = 1.0;
+  }
+  return mat;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// ANATOMY VIEWER
+// ──────────────────────────────────────────────────────────────────────────
+
+export class AnatomyViewer {
+  constructor(container, opts = {}) {
     this.container = container;
-    this._highlightOverlays = [];
-    this._hoverOverlay = null;
-    this._hoveredRegion = null;
-    this._onSelectCb = null;
-    this._onHoverCb = null;
-    this._disposed = false;
-    this._init();
-  }
+    this._accent = new THREE.Color(opts.accentColor ?? 0x22d3ee);
+    this._reducedMotion = !!opts.reducedMotion;
+    this._hoverCb = null;
+    this._selectCb = null;
+    this._progressCb = null;
 
-  // ── Initialise renderer, scene, camera, controls ──────────────────────────
-  _init() {
-    const W = this.container.clientWidth  || 420;
-    const H = this.container.clientHeight || 620;
+    // Structure metadata (from structures.json)
+    this._structures = new Map(); // id -> {id,name,layer,region,center,size,group}
+    this._regionIndex = new Map(); // region id -> {center: V3, radius}
+    this._searchList = []; // [{id, name, nameLower, layer, region}]
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    this.renderer.setSize(W, H);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.18;
-    this.container.appendChild(this.renderer.domElement);
+    // Scene graph: one Group per layer, meshes carry userData.structureId
+    this._layerGroups = new Map(); // layer -> THREE.Group
+    this._layerLoaded = new Map(); // layer -> Promise | undefined
+    this._materials = new Map(); // layer -> shared material
+    this._meshById = new Map(); // structure id -> mesh
+    this._activeLayer = 'skin';
 
-    this.scene = new THREE.Scene();
+    // Picking / highlight state
+    this._hovered = null; // mesh
+    this._selected = null; // mesh
+    this._highlightedRegions = [];
+    this._regionGlow = []; // pulse overlay meshes
+    this._raycaster = new THREE.Raycaster();
+    this._pointer = new THREE.Vector2();
+    this._pointerDown = null;
 
-    this.camera = new THREE.PerspectiveCamera(36, W / H, 0.1, 200);
-    this.camera.position.set(0, 0, 22);
+    // Camera animation
+    this._camAnim = null;
+    this._clock = new THREE.Clock();
 
-    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
-    Object.assign(this.controls, {
-      enableDamping: true, dampingFactor: 0.08,
-      autoRotate: true, autoRotateSpeed: 0.45,
-      minDistance: 5, maxDistance: 40,
+    this._initScene();
+    this._bindEvents();
+
+    // Load metadata + first layers progressively.
+    this._metaReady = this._loadMetadata();
+    this.ready = this._metaReady.then(() => {
+      const first = [this._ensureLayer('skin'), this._ensureLayer('skeleton')];
+      return Promise.all(first);
     });
-    this.controls.target.set(0, 0, 0);
-
-    this._setupLights();
-
-    this.skinGrp     = new THREE.Group();
-    this.muscleGrp   = new THREE.Group();
-    this.skeletonGrp = new THREE.Group();
-    this.vascularGrp = new THREE.Group();
-    this.hitGrp      = new THREE.Group();
-
-    this._buildSkin();
-    this._buildMuscles();
-    this._buildSkeleton();
-    this._buildVascular();
-    this._buildHitMeshes();
-
-    [this.skinGrp, this.muscleGrp, this.skeletonGrp, this.vascularGrp, this.hitGrp]
-      .forEach(g => this.scene.add(g));
-
-    this.hitGrp.visible = false; // invisible, only raycasted
-
-    this.raycaster = new THREE.Raycaster();
-    this.mouse = new THREE.Vector2();
-    this._setupInteraction();
-
-    this._resizeObs = new ResizeObserver(() => this.resize());
-    this._resizeObs.observe(this.container);
-
-    this.setLayer('skin');
-    this._animate();
-  }
-
-  // ── Lighting ──────────────────────────────────────────────────────────────
-  _setupLights() {
-    this.scene.add(new THREE.AmbientLight(0xFFE8D0, 0.45));
-
-    const key = new THREE.DirectionalLight(0xFFF5E8, 2.6);
-    key.position.set(5, 9, 10);
-    key.castShadow = true;
-    key.shadow.mapSize.set(1024, 1024);
-    Object.assign(key.shadow.camera, { near: 0.5, far: 70, left: -9, right: 9, top: 16, bottom: -16 });
-    this.scene.add(key);
-
-    const fill = new THREE.DirectionalLight(0xCCE0FF, 0.75);
-    fill.position.set(-7, 4, 5);
-    this.scene.add(fill);
-
-    const rim = new THREE.DirectionalLight(0xFFFFFF, 1.15);
-    rim.position.set(0, 5, -13);
-    this.scene.add(rim);
-
-    const bounce = new THREE.DirectionalLight(0x806040, 0.28);
-    bounce.position.set(0, -12, 5);
-    this.scene.add(bounce);
-  }
-
-  // ── SKIN LAYER ────────────────────────────────────────────────────────────
-  _buildSkin() {
-    const G = this.skinGrp;
-    const sm = mkSkin();
-    const a = (geo, pos, rot, scale, region) =>
-      addMesh(G, geo, sm, pos, rot, scale, { region, layer: 'skin', label: REGIONS[region]?.label || region });
-
-    // Head — cranium + face forward
-    a(new THREE.SphereGeometry(0.9, 24, 20),  [0, 8.1, 0],    null, [0.88, 1.08, 0.94], 'head');
-    a(new THREE.SphereGeometry(0.62, 18, 14), [0, 7.7, 0.22], null, [0.95, 0.72, 0.82], 'head');
-    // Brow ridge
-    a(new THREE.SphereGeometry(0.48, 12, 8),  [0, 8.0, 0.62], null, [1.15, 0.38, 0.55], 'head');
-
-    // Neck
-    a(cap(0.265, 0.7, 14), [0, 6.82, 0.03], null, [1, 1, 0.88], 'neck');
-
-    // Torso — lathe profile gives realistic waist taper + chest width
-    const tp = [
-      new THREE.Vector2(0.58, -2.18), // hip bottom
-      new THREE.Vector2(0.55, -1.55), // hip
-      new THREE.Vector2(0.37, -0.55), // waist (narrowest)
-      new THREE.Vector2(0.45,  0.1 ), // lower abdomen
-      new THREE.Vector2(0.54,  0.85), // stomach
-      new THREE.Vector2(0.65,  1.62), // chest
-      new THREE.Vector2(0.68,  2.18), // upper chest
-      new THREE.Vector2(0.60,  2.72), // clavicle
-      new THREE.Vector2(0.44,  3.06), // neck base
-    ];
-    a(new THREE.LatheGeometry(tp, 22), [0, 3.5, 0], null, [1, 1, 0.70], 'chest');
-
-    // Pectoral bulge
-    for (const s of [-1, 1])
-      a(new THREE.SphereGeometry(0.43, 14, 12), [s * 0.54, 5.18, 0.36], null, [1, 0.68, 0.50], 'chest');
-
-    // Shoulders
-    for (const s of [-1, 1])
-      a(new THREE.SphereGeometry(0.44, 16, 14), [s * 1.58, 5.70, 0.07], null, [1, 0.82, 0.86],
-        s < 0 ? 'left_shoulder' : 'right_shoulder');
-
-    // Pelvis
-    a(new THREE.SphereGeometry(0.72, 18, 14), [0, 1.22, 0], null, [1.55, 0.85, 0.80], 'hip');
-
-    // Upper arms (capsule = smooth from shoulder to elbow)
-    for (const s of [-1, 1]) {
-      const r = s < 0 ? 'left_upper_arm' : 'right_upper_arm';
-      a(cap(0.22, 2.05, 14), [s * 2.2, 4.15, 0.04], [0, 0, s * 0.12], null, r);
-    }
-
-    // Elbows
-    for (const s of [-1, 1]) {
-      const r = s < 0 ? 'left_elbow' : 'right_elbow';
-      a(new THREE.SphereGeometry(0.19, 12, 10), [s * 2.38, 2.16, 0], null, [1, 0.9, 0.84], r);
-    }
-
-    // Forearms
-    for (const s of [-1, 1]) {
-      const r = s < 0 ? 'left_forearm' : 'right_forearm';
-      a(cap(0.185, 1.75, 12), [s * 2.48, 0.80, 0], [0, 0, s * 0.06], [1, 1, 0.85], r);
-    }
-
-    // Wrists
-    for (const s of [-1, 1])
-      a(new THREE.SphereGeometry(0.15, 10, 8), [s * 2.55, -0.14, 0], null, [1.1, 0.86, 0.74],
-        s < 0 ? 'left_forearm' : 'right_forearm');
-
-    // Hands — palm + knuckle pad + 4 fingers + thumb
-    for (const s of [-1, 1]) {
-      const r = s < 0 ? 'left_hand' : 'right_hand';
-      a(new THREE.SphereGeometry(0.27, 16, 12), [s * 2.55, -0.68, 0.05], null, [0.72, 1.0, 0.48], r);
-      a(new THREE.SphereGeometry(0.22, 12, 10), [s * 2.55, -0.94, 0.11], null, [0.68, 0.54, 0.44], r);
-      for (let f = 0; f < 4; f++) {
-        const fx = s * ((f - 1.5) * 0.12);
-        a(cap(0.052, 0.38, 8), [s * 2.55 + fx, -1.40, 0.1], null, null, r);
-      }
-      a(cap(0.062, 0.26, 8), [s * 2.22, -0.80, 0.17], [0, 0, s * -0.54], null, r);
-    }
-
-    // Thighs
-    for (const s of [-1, 1]) {
-      const r = s < 0 ? 'left_thigh' : 'right_thigh';
-      a(cap(0.32, 2.95, 16), [s * 0.78, -3.1, 0], [0, 0, s * 0.04], null, r);
-    }
-
-    // Knees
-    for (const s of [-1, 1]) {
-      const r = s < 0 ? 'left_knee' : 'right_knee';
-      a(new THREE.SphereGeometry(0.25, 14, 12), [s * 0.78, -5.60, 0.1], null, [1, 0.9, 0.84], r);
-    }
-
-    // Lower legs — shin (front) + calf (back)
-    for (const s of [-1, 1]) {
-      const r = s < 0 ? 'left_lower_leg' : 'right_lower_leg';
-      a(cap(0.165, 2.4, 12), [s * 0.72, -7.12, 0.10], null, [1, 1, 0.82], r);
-      a(cap(0.185, 1.8, 12), [s * 0.82, -6.98, -0.10], null, [0.88, 1, 1.05], r);
-    }
-
-    // Ankles
-    for (const s of [-1, 1]) {
-      const r = s < 0 ? 'left_ankle' : 'right_ankle';
-      a(new THREE.SphereGeometry(0.17, 12, 10), [s * 0.76, -8.86, 0], null, [1.1, 0.84, 1.04], r);
-    }
-
-    // Feet
-    for (const s of [-1, 1]) {
-      const r = s < 0 ? 'left_foot' : 'right_foot';
-      a(cap(0.155, 0.72, 10), [s * 0.76, -9.1, 0.44], [Math.PI * 0.5, 0, 0], [0.85, 1, 0.72], r);
-      a(new THREE.SphereGeometry(0.17, 10, 8),  [s * 0.76, -9.06, -0.22], null, [0.78, 0.68, 0.72], r);
-      a(new THREE.SphereGeometry(0.155, 10, 8), [s * 0.76, -9.10, 0.85],  null, [0.72, 0.44, 0.60], r);
-    }
-  }
-
-  // ── MUSCLE LAYER ──────────────────────────────────────────────────────────
-  _buildMuscles() {
-    const G = this.muscleGrp;
-    const mm = mkMuscle(false), mmd = mkMuscle(true), mt = mkTendon();
-    const a = (geo, pos, rot, scale, region, name, mat = mm) =>
-      addMesh(G, geo, mat, pos, rot, scale, { region, layer: 'muscle', label: name });
-
-    // Neck — sternocleidomastoid (bilateral)
-    for (const s of [-1, 1])
-      a(spindle(1.35, 0.15), [s * 0.4, 6.48, 0.13], [0, 0, s * -0.17], null, 'neck', 'Sternocleidomastoid');
-
-    // Trapezius
-    a(spindle(2.3, 0.5, 0.07, 0.95), [0, 4.5, -0.5], null, [2.42, 1, 0.30], 'upper_back', 'Trapezius', mmd);
-
-    // Deltoids
-    for (const s of [-1, 1])
-      a(spindle(1.5, 0.38, 0.06, 0.90), [s * 2.2, 4.2, 0], [0, 0, s * 0.25], [1, 1, 0.74],
-        s < 0 ? 'left_shoulder' : 'right_shoulder', 'Deltoid');
-
-    // Pectorals
-    for (const s of [-1, 1])
-      a(spindle(1.7, 0.40, 0.04, 0.90), [s * 0.82, 3.78, 0.40], [0, s * 0.30, 0],
-        [1.25, 0.82, 0.42], 'chest', 'Pectoralis Major');
-
-    // Serratus Anterior
-    for (const s of [-1, 1])
-      a(spindle(1.6, 0.18, 0.10, 0.85), [s * 1.55, 2.88, 0.12], [0, 0, s * 0.14],
-        [0.75, 1, 0.28], 'chest', 'Serratus Anterior', mmd);
-
-    // Biceps Brachii
-    for (const s of [-1, 1])
-      a(spindle(2.0, 0.22), [s * 2.28, 3.1, 0.12], [0, 0, s * 0.08], null,
-        s < 0 ? 'left_upper_arm' : 'right_upper_arm', 'Biceps Brachii');
-
-    // Triceps Brachii
-    for (const s of [-1, 1])
-      a(spindle(2.1, 0.20, 0.10, 0.80), [s * 2.28, 3.0, -0.14], [0, 0, s * 0.08], null,
-        s < 0 ? 'left_upper_arm' : 'right_upper_arm', 'Triceps Brachii', mmd);
-
-    // Forearms
-    for (const s of [-1, 1]) {
-      const r = s < 0 ? 'left_forearm' : 'right_forearm';
-      a(spindle(1.8, 0.17, 0.10, 0.70), [s * 2.52, 0.10, 0.04], [0, 0, s * 0.06], null, r, 'Forearm Flexors');
-      a(spindle(1.6, 0.14, 0.10, 0.70), [s * 2.42, 0.10, -0.06], [0, 0, s * 0.06], null, r, 'Forearm Extensors', mmd);
-    }
-
-    // Rectus Abdominis (4 pairs = "6-pack" + lower section)
-    for (let i = 0; i < 4; i++) {
-      const y = 2.3 - i * 0.60;
-      for (const s of [-1, 1])
-        a(spindle(0.48, 0.17, 0.04, 0.96), [s * 0.26, y, 0.42], null, [1.1, 1, 0.35], 'abdomen', 'Rectus Abdominis');
-    }
-
-    // External Oblique
-    for (const s of [-1, 1])
-      a(spindle(2.0, 0.26, 0.07, 0.90), [s * 1.25, 1.58, 0.22], [0, 0, s * 0.20],
-        [1, 1, 0.40], 'abdomen', 'External Oblique', mmd);
-
-    // Latissimus Dorsi
-    for (const s of [-1, 1])
-      a(spindle(2.7, 0.48, 0.04, 0.92), [s * 1.18, 2.2, -0.38], null, [1, 1.08, 0.32], 'upper_back', 'Latissimus Dorsi', mmd);
-
-    // Erector Spinae (bilateral)
-    for (const s of [-1, 1])
-      a(spindle(3.0, 0.18), [s * 0.28, 0.88, -0.48], null, null, 'lower_back', 'Erector Spinae', mmd);
-
-    // Gluteus Maximus
-    for (const s of [-1, 1])
-      a(spindle(1.5, 0.52, 0.07, 0.90), [s * 0.70, -1.55, -0.32], null, [1.05, 1, 0.82], 'hip', 'Gluteus Maximus');
-
-    // Quadriceps (4 heads per side)
-    for (const s of [-1, 1]) {
-      const r = s < 0 ? 'left_thigh' : 'right_thigh';
-      a(spindle(3.0, 0.28), [s * 0.95, -3.5, 0.28], null, null, r, 'Rectus Femoris');
-      a(spindle(2.7, 0.21), [s * 1.18, -3.75, 0.15], null, null, r, 'Vastus Lateralis', mmd);
-      a(spindle(2.5, 0.19), [s * 0.74, -3.75, 0.15], null, null, r, 'Vastus Medialis', mmd);
-      a(spindle(2.4, 0.17), [s * 0.95, -3.60, 0.07], null, null, r, 'Vastus Intermedius', mmd);
-    }
-
-    // Hamstrings
-    for (const s of [-1, 1]) {
-      const r = s < 0 ? 'left_thigh' : 'right_thigh';
-      a(spindle(2.8, 0.21), [s * 0.82, -3.55, -0.22], null, null, r, 'Biceps Femoris', mmd);
-      a(spindle(2.6, 0.17), [s * 1.05, -3.45, -0.18], null, null, r, 'Semitendinosus', mmd);
-    }
-
-    // Adductors
-    for (const s of [-1, 1])
-      a(spindle(2.1, 0.19), [s * 0.70, -3.0, 0], null, null,
-        s < 0 ? 'left_thigh' : 'right_thigh', 'Adductor Magnus', mmd);
-
-    // Gastrocnemius (lateral + medial heads)
-    for (const s of [-1, 1]) {
-      const r = s < 0 ? 'left_lower_leg' : 'right_lower_leg';
-      a(spindle(2.0, 0.20, 0.07, 0.68), [s * 0.86, -6.80, -0.14], null, [1, 1, 1.05], r, 'Gastrocnemius Lateral');
-      a(spindle(1.85, 0.18, 0.07, 0.68), [s * 1.08, -6.75, -0.10], null, [1, 1, 1.05], r, 'Gastrocnemius Medial');
-    }
-
-    // Soleus
-    for (const s of [-1, 1])
-      a(spindle(1.6, 0.15, 0.10, 0.62), [s * 0.95, -7.20, -0.06], null, null,
-        s < 0 ? 'left_lower_leg' : 'right_lower_leg', 'Soleus', mmd);
-
-    // Tibialis Anterior
-    for (const s of [-1, 1])
-      a(spindle(1.7, 0.13, 0.10, 0.72), [s * 0.82, -6.80, 0.16], null, null,
-        s < 0 ? 'left_lower_leg' : 'right_lower_leg', 'Tibialis Anterior');
-
-    // Achilles tendon
-    for (const s of [-1, 1])
-      a(spindle(0.85, 0.06, 0.25, 0.75), [s * 0.95, -8.02, -0.12], null, null,
-        s < 0 ? 'left_ankle' : 'right_ankle', 'Achilles Tendon', mt);
-  }
-
-  // ── SKELETON LAYER ────────────────────────────────────────────────────────
-  _buildSkeleton() {
-    const G = this.skeletonGrp;
-    const bm = mkBone();
-    const a = (geo, pos, rot, scale, region, name) =>
-      addMesh(G, geo, bm, pos, rot, scale, { region, layer: 'skeleton', label: name });
-
-    // Skull + mandible
-    a(new THREE.SphereGeometry(0.88, 20, 16), [0, 8.1, 0],     null, [0.85, 1, 0.88], 'head', 'Skull');
-    a(new THREE.SphereGeometry(0.36, 12, 8),  [0, 7.60, 0.30], null, [1.1, 0.52, 0.72], 'head', 'Mandible');
-
-    // Vertebral column (24 vertebrae)
-    const vGeo = new THREE.CylinderGeometry(0.19, 0.19, 0.13, 8);
-    for (let i = 0; i < 24; i++) {
-      const y = 6.2 - i * 0.23, sc = 0.82 + i * 0.022;
-      const reg = i < 7 ? 'neck' : (i < 19 ? 'chest' : 'lower_back');
-      a(vGeo, [0, y, -0.35], null, [sc, 1, sc], reg, `Vertebra ${i + 1}`);
-    }
-
-    // Sacrum
-    a(longBone(0.62, 0.11, 0.19), [0, -0.50, -0.30], [0.14, 0, 0], null, 'hip', 'Sacrum');
-
-    // Sternum
-    a(new THREE.CylinderGeometry(0.075, 0.095, 2.2, 6), [0, 3.4, 0.45], null, [1.75, 1, 0.42], 'chest', 'Sternum');
-
-    // Ribs (12 pairs)
-    const ribW = [1.25, 1.42, 1.58, 1.72, 1.82, 1.90, 1.90, 1.80, 1.65, 1.45, 0.90, 0.72];
-    for (let i = 0; i < 12; i++) {
-      const y = 4.5 - i * 0.26, w = ribW[i];
-      for (const s of [-1, 1]) {
-        const pts = [
-          [0, y, -0.28], [s * w * 0.44, y - 0.04, -0.20],
-          [s * w * 0.86, y + 0.02, 0.08], [s * w * 0.54, y + 0.10, 0.36],
-        ];
-        if (i < 10) pts.push([s * 0.18, y + 0.12, 0.43]);
-        a(tubePath(pts, 0.055, 16, 5), [0, 0, 0], null, null, 'chest', `Rib ${i + 1}`);
-      }
-    }
-
-    // Clavicles
-    for (const s of [-1, 1])
-      a(tubePath([[0, 4.75, 0.30], [s * 1.05, 4.85, 0.10], [s * 2.0, 4.65, -0.06]], 0.062, 10, 5),
-        [0, 0, 0], null, null, s < 0 ? 'left_shoulder' : 'right_shoulder', 'Clavicle');
-
-    // Scapulae
-    for (const s of [-1, 1])
-      a(new THREE.CylinderGeometry(0.04, 0.44, 1.25, 3), [s * 1.48, 3.85, -0.56], [0, 0, s * 0.11],
-        [1, 1, 0.28], s < 0 ? 'left_shoulder' : 'right_shoulder', 'Scapula');
-
-    // Pelvis
-    for (const s of [-1, 1])
-      a(new THREE.SphereGeometry(0.84, 14, 10), [s * 0.70, -1.18, 0.02], null, [1.12, 0.98, 0.50], 'hip', 'Ilium');
-    a(new THREE.CylinderGeometry(0.24, 0.44, 0.48, 8), [0, -1.80, 0.10], null, [2.25, 1, 0.52], 'hip', 'Pubis');
-
-    // Arms and legs (both sides)
-    for (const s of [-1, 1]) {
-      const sl = s < 0 ? 'left' : 'right';
-      a(new THREE.SphereGeometry(0.21, 10, 8), [s * 2.12, 4.58, 0],   null, null, `${sl}_shoulder`, 'Shoulder Joint');
-      a(longBone(2.7, 0.10, 0.17), [s * 2.28, 3.05, 0], [0, 0, s * 0.08], null, `${sl}_upper_arm`, 'Humerus');
-      a(new THREE.SphereGeometry(0.16, 10, 8), [s * 2.38, 1.55, 0],   null, null, `${sl}_elbow`, 'Elbow Joint');
-      a(longBone(2.3, 0.068, 0.11), [s * 2.50, 0.0, 0.06], [0, 0, s * 0.05], null, `${sl}_forearm`, 'Radius');
-      a(longBone(2.4, 0.058, 0.095),[s * 2.36, -0.05, -0.06],[0, 0, s * 0.05], null, `${sl}_forearm`, 'Ulna');
-      a(new THREE.SphereGeometry(0.26, 10, 8), [s * 2.55, -1.50, 0],  null, [0.62, 0.96, 0.33], `${sl}_hand`, 'Carpals');
-      a(new THREE.SphereGeometry(0.21, 10, 8), [s * 1.02, -1.85, 0],  null, null, 'hip', 'Hip Joint');
-      a(longBone(3.65, 0.125, 0.19), [s * 0.98, -3.85, 0], null, null, `${sl}_thigh`, 'Femur');
-      a(new THREE.SphereGeometry(0.17, 10, 8), [s * 0.97, -5.70, 0.22], null, [0.96, 0.68, 0.52], `${sl}_knee`, 'Patella');
-      a(longBone(3.1, 0.088, 0.135),[s * 0.92, -7.20, 0.04], null, null, `${sl}_lower_leg`, 'Tibia');
-      a(longBone(2.9, 0.048, 0.085),[s * 1.10, -7.20, -0.04], null, null, `${sl}_lower_leg`, 'Fibula');
-      a(new THREE.SphereGeometry(0.135, 8, 6), [s * 0.97, -8.32, 0],  null, null, `${sl}_ankle`, 'Ankle Joint');
-      a(new THREE.SphereGeometry(0.33, 10, 8), [s * 0.97, -8.50, 0.35], null, [0.62, 0.30, 1.25], `${sl}_foot`, 'Foot Bones');
-    }
-  }
-
-  // ── VASCULAR LAYER ────────────────────────────────────────────────────────
-  _buildVascular() {
-    const G = this.vascularGrp;
-    const aM = mkVessel(true), vM = mkVessel(false);
-    const v = (pts, mat, r, region, name) =>
-      addMesh(G, tubePath(pts, r, 20, 6), mat, [0, 0, 0], null, null, { region, layer: 'vascular', label: name });
-
-    // Aorta
-    v([[0, 4.5, 0.1],[0, 3.5, 0.15],[0, 1.5, 0.12],[0, 0, 0.08],[0, -1.5, 0.05]], aM, 0.078, 'chest', 'Aorta');
-
-    // Carotid arteries (bilateral)
-    for (const s of [-1, 1])
-      v([[s*0.15, 4.5, 0.12],[s*0.22, 5.2, 0.10],[s*0.25, 6.0, 0.08],[s*0.20, 6.8, 0.05]], aM, 0.038, 'neck', 'Carotid Artery');
-
-    // Subclavian → Brachial arteries
-    for (const s of [-1, 1]) {
-      const sl = s < 0 ? 'left' : 'right';
-      v([[0, 4.5, 0.1],[s*0.8, 4.6, 0.05],[s*1.8, 4.5, 0],[s*2.2, 3.5, 0.05],[s*2.35, 1.5, 0.02]],
-        aM, 0.034, `${sl}_upper_arm`, 'Brachial Artery');
-    }
-
-    // Iliac → Femoral → Popliteal arteries
-    for (const s of [-1, 1]) {
-      const sl = s < 0 ? 'left' : 'right';
-      v([[0, -1.5, 0.05],[s*0.5, -1.8, 0.02],[s*0.9, -3.0, 0.10],[s*0.95, -5.5, 0.10]],
-        aM, 0.038, `${sl}_thigh`, 'Femoral Artery');
-      v([[s*0.95, -5.5, 0.1],[s*0.95, -7.0, 0.08],[s*0.95, -8.0, 0.05]],
-        aM, 0.028, `${sl}_lower_leg`, 'Popliteal Artery');
-    }
-
-    // Vena Cava
-    v([[0, 4.5, -0.1],[0, 3.0, -0.12],[0, 1.0, -0.10],[0, -1.0, -0.08]], vM, 0.068, 'chest', 'Vena Cava');
-
-    // Jugular veins
-    for (const s of [-1, 1])
-      v([[s*0.30, 4.5, -0.08],[s*0.35, 5.5, -0.05],[s*0.30, 6.5, -0.02]], vM, 0.033, 'neck', 'Jugular Vein');
-
-    // Femoral veins
-    for (const s of [-1, 1]) {
-      const sl = s < 0 ? 'left' : 'right';
-      v([[s*0.50, -1.8, -0.05],[s*1.10, -3.5, -0.10],[s*1.10, -5.5, -0.08],[s*1.05, -7.5, -0.05]],
-        vM, 0.033, `${sl}_thigh`, 'Femoral Vein');
-    }
-  }
-
-  // ── HIT MESHES (invisible boxes for reliable raycasting) ─────────────────
-  _buildHitMeshes() {
-    const transparent = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false });
-    Object.entries(REGIONS).forEach(([regionId, info]) => {
-      const yC = (info.y[0] + info.y[1]) / 2, yH = (info.y[1] - info.y[0]) / 2;
-      const xC = (info.x[0] + info.x[1]) / 2, xH = (info.x[1] - info.x[0]) / 2;
-      const m = new THREE.Mesh(new THREE.BoxGeometry(xH * 2, yH * 2, 1.6), transparent.clone());
-      m.position.set(xC, yC, 0);
-      m.userData = { region: regionId, layer: 'hit', label: info.label, isHitMesh: true };
-      this.hitGrp.add(m);
+    this.ready.then(() => this._applyLayerVisibility()).catch((err) => {
+      console.error('AnatomyViewer: initial load failed', err);
     });
+
+    this._animate = this._animate.bind(this);
+    this._renderer.setAnimationLoop(this._animate);
   }
 
-  // ── INTERACTION ───────────────────────────────────────────────────────────
-  _setupInteraction() {
-    const el = this.renderer.domElement;
-    el.addEventListener('pointermove', e => this._onMove(e));
-    el.addEventListener('pointerdown', e => this._onClick(e));
-    el.style.cursor = 'grab';
+  // ── Scene setup ─────────────────────────────────────────────────────────
+
+  _initScene() {
+    const w = this.container.clientWidth || 480;
+    const h = this.container.clientHeight || 560;
+
+    this._renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    this._renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this._renderer.setSize(w, h);
+    this._renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this._renderer.toneMappingExposure = 1.05;
+    this._renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.container.appendChild(this._renderer.domElement);
+
+    this._scene = new THREE.Scene();
+    const env = new RoomEnvironment();
+    const pmrem = new THREE.PMREMGenerator(this._renderer);
+    this._scene.environment = pmrem.fromScene(env, 0.04).texture;
+
+    // Model is ~1 unit tall centered near origin (y in [-0.5, 0.5]).
+    this._camera = new THREE.PerspectiveCamera(35, w / h, 0.005, 20);
+    this._homePos = new THREE.Vector3(0, 0.05, 1.55);
+    this._homeTarget = new THREE.Vector3(0, 0, 0);
+    this._camera.position.copy(this._homePos);
+
+    this._controls = new OrbitControls(this._camera, this._renderer.domElement);
+    this._controls.target.copy(this._homeTarget);
+    this._controls.enableDamping = true;
+    this._controls.dampingFactor = 0.08;
+    this._controls.minDistance = 0.12;
+    this._controls.maxDistance = 3.2;
+    this._controls.update();
+
+    // Lighting: IBL + key/fill/rim for definition.
+    const key = new THREE.DirectionalLight(0xffffff, 1.4);
+    key.position.set(1.2, 1.6, 1.8);
+    const fill = new THREE.DirectionalLight(0xbfd8ff, 0.5);
+    fill.position.set(-1.5, 0.4, -1.0);
+    const rim = new THREE.DirectionalLight(0xffe8d0, 0.65);
+    rim.position.set(0, 1.2, -1.8);
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x334455, 0.35);
+    this._scene.add(key, fill, rim, hemi);
+
+    this._root = new THREE.Group();
+    this._scene.add(this._root);
+
+    for (const name of LAYER_ORDER) {
+      const g = new THREE.Group();
+      g.name = `layer-${name}`;
+      g.visible = false;
+      this._layerGroups.set(name, g);
+      this._materials.set(name, makeLayerMaterial(name));
+      this._root.add(g);
+    }
   }
 
-  _getRayHits(e) {
-    const rect = this.renderer.domElement.getBoundingClientRect();
-    this.mouse.x = ((e.clientX - rect.left)  / rect.width)  * 2 - 1;
-    this.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-    this.raycaster.setFromCamera(this.mouse, this.camera);
-    const meshes = [];
-    // Check hit group (boxes) + visible body meshes
-    [this.hitGrp, this.skinGrp, this.muscleGrp, this.skeletonGrp, this.vascularGrp]
-      .forEach(g => g.traverse(c => { if (c.isMesh) meshes.push(c); }));
-    return this.raycaster.intersectObjects(meshes, false).filter(h => h.object.userData.region);
-  }
+  // ── Asset loading ───────────────────────────────────────────────────────
 
-  _onMove(e) {
-    const hits = this._getRayHits(e);
-    const el = this.renderer.domElement;
-    if (hits.length) {
-      el.style.cursor = 'pointer';
-      const ud = hits[0].object.userData;
-      if (this._onHoverCb) this._onHoverCb(ud);
-      if (this._hoveredRegion !== ud.region) {
-        this._hoveredRegion = ud.region;
-        this._clearHoverOverlay();
-        this._makeHoverOverlay(ud.region);
+  async _loadMetadata() {
+    const resp = await fetch(`${ASSET_BASE}/structures.json`);
+    if (!resp.ok) throw new Error(`structures.json HTTP ${resp.status}`);
+    const data = await resp.json();
+    this.attribution = data.attribution || '';
+    this.license = data.license || '';
+
+    const regionAcc = new Map(); // region -> {min: V3, max: V3}
+    for (const s of data.structures) {
+      this._structures.set(s.id, s);
+      if (s.layer !== 'skin') {
+        this._searchList.push({
+          id: s.id,
+          name: s.name,
+          nameLower: s.name.toLowerCase(),
+          layer: s.layer,
+          region: s.region,
+        });
       }
-    } else {
-      el.style.cursor = 'grab';
-      if (this._onHoverCb) this._onHoverCb(null);
-      this._clearHoverOverlay();
-      this._hoveredRegion = null;
+      // Skin meshes span the whole body — exclude them from region bounds
+      // so focusRegion() targets stay tight.
+      if (s.layer === 'skin') continue;
+      const c = s.center, sz = s.size;
+      let acc = regionAcc.get(s.region);
+      if (!acc) {
+        acc = {
+          min: new THREE.Vector3(Infinity, Infinity, Infinity),
+          max: new THREE.Vector3(-Infinity, -Infinity, -Infinity),
+        };
+        regionAcc.set(s.region, acc);
+      }
+      acc.min.min(new THREE.Vector3(c[0] - sz[0] / 2, c[1] - sz[1] / 2, c[2] - sz[2] / 2));
+      acc.max.max(new THREE.Vector3(c[0] + sz[0] / 2, c[1] + sz[1] / 2, c[2] + sz[2] / 2));
     }
-  }
-
-  _onClick(e) {
-    const hits = this._getRayHits(e);
-    if (hits.length && this._onSelectCb) this._onSelectCb(hits[0].object.userData);
-  }
-
-  _makeHoverOverlay(regionId) {
-    const info = REGIONS[regionId]; if (!info) return;
-    const yC = (info.y[0] + info.y[1]) / 2, yH = (info.y[1] - info.y[0]) / 2 * 1.12;
-    const xC = (info.x[0] + info.x[1]) / 2, xH = (info.x[1] - info.x[0]) / 2 * 1.12;
-    const m = new THREE.Mesh(
-      new THREE.BoxGeometry(xH * 2, yH * 2, 2.0),
-      new THREE.MeshBasicMaterial({ color: 0x38BDF8, transparent: true, opacity: 0.13, depthWrite: false }),
-    );
-    m.position.set(xC, yC, 0);
-    m.renderOrder = 10;
-    this.scene.add(m);
-    this._hoverOverlay = m;
-  }
-
-  _clearHoverOverlay() {
-    if (this._hoverOverlay) {
-      this.scene.remove(this._hoverOverlay);
-      this._hoverOverlay.geometry.dispose();
-      this._hoverOverlay.material.dispose();
-      this._hoverOverlay = null;
+    for (const [region, acc] of regionAcc) {
+      const center = acc.min.clone().add(acc.max).multiplyScalar(0.5);
+      const radius = Math.max(0.06, acc.min.distanceTo(acc.max) / 2);
+      this._regionIndex.set(region, { center, radius, min: acc.min, max: acc.max });
     }
+    this._searchList.sort((a, b) => a.name.length - b.name.length);
   }
 
-  // ── PUBLIC API ────────────────────────────────────────────────────────────
+  _ensureLayer(name) {
+    if (this._layerLoaded.has(name)) return this._layerLoaded.get(name);
+    const cfg = LAYERS[name];
+    if (!cfg) return Promise.resolve();
+    const loader = new GLTFLoader();
+    loader.setMeshoptDecoder(MeshoptDecoder);
+    const group = this._layerGroups.get(name);
+    const material = this._materials.get(name);
 
-  /**
-   * Switch body system layer.
-   * Modes: 'skin' | 'muscles' | 'skeleton' | 'vascular' | 'all'
-   *
-   * When a deep layer is selected the skin becomes transparent so you can
-   * see through it to the structures underneath.
-   */
+    // Structure-id resolution during traversal needs structures.json, so
+    // gate on metadata (layer buttons can fire before it has arrived).
+    const promise = this._metaReady.then(() => Promise.all(
+      cfg.files.map(
+        (file) =>
+          new Promise((resolve, reject) => {
+            loader.load(
+              `${ASSET_BASE}/${file}`,
+              (gltf) => {
+                gltf.scene.traverse((node) => {
+                  if (!node.isMesh) return;
+                  node.material = material;
+                  // The structure id (FJ####/FJ####M) is the name of the mesh
+                  // itself or of an ancestor node (gltfpack keeps node names
+                  // but renames mesh primitives to mesh_N).
+                  let sid = null;
+                  for (let n = node; n && !sid; n = n.parent) {
+                    if (this._structures.has(n.name)) sid = n.name;
+                  }
+                  node.userData.structureId = sid;
+                  node.userData.layer = name;
+                  if (sid && !this._meshById.has(sid)) this._meshById.set(sid, node);
+                });
+                group.add(gltf.scene);
+                resolve();
+              },
+              undefined,
+              (err) => reject(err)
+            );
+          })
+      )
+    )).then(() => {
+      this._progressCb?.(name);
+    });
+    this._layerLoaded.set(name, promise);
+    return promise;
+  }
+
+  // ── Layer system ────────────────────────────────────────────────────────
+
+  /** layer: skin | muscles | skeleton | organs | vascular | nerves | all */
   setLayer(layer) {
-    this.skinGrp.visible     = (layer !== 'vascular');
-    this.muscleGrp.visible   = (layer === 'muscles' || layer === 'all');
-    this.skeletonGrp.visible = (layer === 'skeleton' || layer === 'all');
-    this.vascularGrp.visible = (layer === 'vascular' || layer === 'all');
-
-    const skinOpacity = { skin: 1.0, muscles: 0.18, skeleton: 0.12, vascular: 0.0, all: 0.22 };
-    const op = skinOpacity[layer] ?? 1.0;
-
-    this.skinGrp.traverse(c => {
-      if (!c.isMesh) return;
-      c.material.transparent = op < 1;
-      c.material.opacity = op;
-      c.material.depthWrite = op >= 0.99;
+    this._activeLayer = layer;
+    const needed = layer === 'all' ? [...LAYER_ORDER] : [layer];
+    // Always keep skeleton available as an anatomical anchor for non-skin views.
+    if (layer !== 'skin' && layer !== 'all' && layer !== 'skeleton') needed.push('skeleton');
+    Promise.all(needed.map((n) => this._ensureLayer(n))).then(() => {
+      if (this._activeLayer === layer) this._applyLayerVisibility();
     });
-
-    this.muscleGrp.traverse(c => {
-      if (!c.isMesh) return;
-      c.material.transparent = (layer === 'all');
-      c.material.opacity = (layer === 'all') ? 0.70 : 1.0;
-    });
+    this._applyLayerVisibility(); // show whatever is already loaded
   }
 
-  /** Highlight one or more regions with a pulsing blue overlay */
-  highlight(regionIds = []) {
-    this.clearHighlight();
-    for (const rid of regionIds) {
-      const info = REGIONS[rid]; if (!info) continue;
-      const yC = (info.y[0] + info.y[1]) / 2, yH = Math.max((info.y[1] - info.y[0]) / 2, 0.45);
-      const xC = (info.x[0] + info.x[1]) / 2, xH = Math.max((info.x[1] - info.x[0]) / 2, 0.45);
-      const m = new THREE.Mesh(
-        new THREE.BoxGeometry(xH * 2.2, yH * 2.2, 2.2),
-        new THREE.MeshBasicMaterial({ color: 0x38BDF8, transparent: true, opacity: 0.14, depthWrite: false }),
-      );
-      m.position.set(xC, yC, 0);
-      m.renderOrder = 10;
-      this.scene.add(m);
-      this._highlightOverlays.push(m);
+  _applyLayerVisibility() {
+    const layer = this._activeLayer;
+    const skinMat = this._materials.get('skin');
+    for (const name of LAYER_ORDER) {
+      const g = this._layerGroups.get(name);
+      if (layer === 'all') {
+        g.visible = true;
+      } else if (layer === 'skin') {
+        g.visible = name === 'skin';
+      } else {
+        g.visible = name === layer || name === 'skeleton';
+      }
+    }
+    if (layer === 'skin') {
+      skinMat.opacity = 1.0;
+      skinMat.depthWrite = true;
+    } else if (layer === 'all') {
+      this._layerGroups.get('skin').visible = true;
+      skinMat.opacity = 0.16;
+      skinMat.depthWrite = false;
+    } else {
+      // Ghost the skin for silhouette context.
+      this._layerGroups.get('skin').visible = true;
+      skinMat.opacity = 0.1;
+      skinMat.depthWrite = false;
     }
   }
 
-  clearHighlight() {
-    this._highlightOverlays.forEach(o => {
-      this.scene.remove(o);
-      o.geometry.dispose();
-      o.material.dispose();
+  // ── Picking ─────────────────────────────────────────────────────────────
+
+  _bindEvents() {
+    const el = this._renderer.domElement;
+    el.addEventListener('pointermove', (e) => this._onPointerMove(e));
+    el.addEventListener('pointerdown', (e) => {
+      this._pointerDown = { x: e.clientX, y: e.clientY, t: performance.now() };
     });
-    this._highlightOverlays = [];
+    el.addEventListener('pointerup', (e) => this._onPointerUp(e));
+    el.addEventListener('pointerleave', () => this._setHover(null));
+    this._resizeObserver = new ResizeObserver(() => this.resize());
+    this._resizeObserver.observe(this.container);
   }
 
-  /** Smoothly move camera focus to a region */
-  focusRegion(regionId) {
-    const info = REGIONS[regionId]; if (!info) return;
-    const yC = (info.y[0] + info.y[1]) / 2;
-    const xC = (info.x[0] + info.x[1]) / 2;
-    this.controls.target.set(xC, yC, 0);
-    const dir = this.camera.position.clone().sub(this.controls.target).normalize();
-    this.camera.position.copy(this.controls.target.clone().add(dir.multiplyScalar(12)));
-    this.controls.update();
+  _pick(e) {
+    const rect = this._renderer.domElement.getBoundingClientRect();
+    this._pointer.set(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1
+    );
+    this._raycaster.setFromCamera(this._pointer, this._camera);
+    const targets = [];
+    for (const name of LAYER_ORDER) {
+      const g = this._layerGroups.get(name);
+      // In ghost mode the skin is visible but should not swallow picks.
+      if (!g.visible) continue;
+      if (name === 'skin' && this._activeLayer !== 'skin') continue;
+      targets.push(g);
+    }
+    const hits = this._raycaster.intersectObjects(targets, true);
+    for (const hit of hits) {
+      const sid = hit.object?.userData?.structureId;
+      if (sid && this._structures.has(sid)) return hit.object;
+    }
+    return null;
   }
 
-  /** Snap camera to a cardinal view */
+  _onPointerMove(e) {
+    if (this._pointerDown && (Math.abs(e.clientX - this._pointerDown.x) > 4 ||
+        Math.abs(e.clientY - this._pointerDown.y) > 4)) {
+      this._setHover(null); // dragging — don't flicker labels
+      return;
+    }
+    this._setHover(this._pick(e));
+  }
+
+  _onPointerUp(e) {
+    const down = this._pointerDown;
+    this._pointerDown = null;
+    if (!down) return;
+    const moved = Math.abs(e.clientX - down.x) > 5 || Math.abs(e.clientY - down.y) > 5;
+    const slow = performance.now() - down.t > 400;
+    if (moved || slow) return; // was a drag, not a click
+    const mesh = this._pick(e);
+    if (mesh) this._selectMesh(mesh, { focus: false });
+  }
+
+  // ── Hover / selection visuals ───────────────────────────────────────────
+
+  _setHover(mesh) {
+    if (mesh === this._hovered) return;
+    if (this._hovered && this._hovered !== this._selected) {
+      this._clearEmphasis(this._hovered);
+    }
+    this._hovered = mesh;
+    if (mesh) {
+      if (mesh !== this._selected) this._applyEmphasis(mesh, 0.35);
+      const s = this._structures.get(mesh.userData.structureId);
+      this._hoverCb?.({
+        region: s.region,
+        label: this._structureLabel(s),
+        layer: s.layer,
+        structure: s.id,
+        structureName: s.name,
+        group: s.group || null,
+      });
+      this._renderer.domElement.style.cursor = 'pointer';
+    } else {
+      this._hoverCb?.(null);
+      this._renderer.domElement.style.cursor = '';
+    }
+  }
+
+  _structureLabel(s) {
+    // Patient-facing label: structure name, capitalized.
+    return s.name.charAt(0).toUpperCase() + s.name.slice(1);
+  }
+
+  _applyEmphasis(mesh, strength) {
+    if (!mesh.userData.ownMaterial) {
+      // Clone the shared layer material once per emphasized mesh.
+      mesh.userData.sharedMaterial = mesh.material;
+      mesh.material = mesh.material.clone();
+      mesh.userData.ownMaterial = true;
+    }
+    mesh.material.emissive = this._accent.clone();
+    mesh.material.emissiveIntensity = strength;
+    if (mesh.userData.layer === 'skin') {
+      mesh.material.opacity = Math.max(mesh.material.opacity, 0.85);
+    }
+  }
+
+  _clearEmphasis(mesh) {
+    if (mesh.userData.ownMaterial) {
+      mesh.material.dispose();
+      mesh.material = mesh.userData.sharedMaterial;
+      mesh.userData.ownMaterial = false;
+    }
+  }
+
+  _selectMesh(mesh, { focus = true } = {}) {
+    if (this._selected && this._selected !== mesh) this._clearEmphasis(this._selected);
+    this._selected = mesh;
+    this._applyEmphasis(mesh, 0.75);
+    const s = this._structures.get(mesh.userData.structureId);
+    if (focus) this._focusPoint(new THREE.Vector3(...s.center), Math.max(...s.size) * 2.2);
+    this._selectCb?.({
+      region: s.region,
+      label: this._structureLabel(s),
+      layer: s.layer,
+      structure: s.id,
+      structureName: s.name,
+      group: s.group || null,
+    });
+  }
+
+  /** Programmatic selection by structure id (used by search). */
+  async selectStructure(id) {
+    const s = this._structures.get(id);
+    if (!s) return false;
+    await this._ensureLayer(s.layer === 'skin' ? 'skin' : s.layer);
+    if (this._activeLayer !== s.layer && this._activeLayer !== 'all') {
+      this._activeLayer = s.layer;
+      this._applyLayerVisibility();
+    }
+    const mesh = this._meshById.get(id);
+    if (!mesh) {
+      // Structure known but mesh missing (defensive) — still focus its center.
+      this._focusPoint(new THREE.Vector3(...s.center), Math.max(...s.size) * 2.2);
+      return false;
+    }
+    this._selectMesh(mesh, { focus: true });
+    return true;
+  }
+
+  /** Name search over all structures. Returns top `limit` matches. */
+  search(query, limit = 12) {
+    const q = (query || '').trim().toLowerCase();
+    if (q.length < 2) return [];
+    const starts = [];
+    const contains = [];
+    for (const item of this._searchList) {
+      const idx = item.nameLower.indexOf(q);
+      if (idx === 0) starts.push(item);
+      else if (idx > 0) contains.push(item);
+      if (starts.length >= limit) break;
+    }
+    return starts.concat(contains).slice(0, limit).map((item) => ({
+      id: item.id,
+      name: item.name,
+      layer: item.layer,
+      region: item.region,
+      regionLabel: REGIONS[item.region]?.label || item.region,
+    }));
+  }
+
+  // ── Region highlight & focus (backend anatomy context) ──────────────────
+
+  highlight(regionIds) {
+    // Clear previous pulses.
+    for (const glow of this._regionGlow) {
+      glow.parent?.remove(glow);
+      glow.geometry.dispose();
+      glow.material.dispose();
+    }
+    this._regionGlow = [];
+    this._highlightedRegions = (regionIds || []).filter((id) => this._regionIndex.has(id));
+    for (const id of this._highlightedRegions) {
+      const { center, radius } = this._regionIndex.get(id);
+      const geo = new THREE.SphereGeometry(Math.min(radius * 0.7, 0.1), 24, 16);
+      const mat = new THREE.MeshBasicMaterial({
+        color: this._accent,
+        transparent: true,
+        opacity: 0.16,
+        depthWrite: false,
+      });
+      const glow = new THREE.Mesh(geo, mat);
+      glow.position.copy(center);
+      glow.userData.pulse = true;
+      glow.raycast = () => {}; // never intercepts picking
+      this._root.add(glow);
+      this._regionGlow.push(glow);
+    }
+  }
+
+  focusRegion(id) {
+    const entry = this._regionIndex.get(id);
+    if (!entry) return;
+    const span = entry.min.distanceTo(entry.max);
+    this._focusPoint(entry.center, Math.max(span * 1.35, 0.22));
+  }
+
+  _focusPoint(target, viewSize) {
+    const dist = THREE.MathUtils.clamp(
+      viewSize / (2 * Math.tan(THREE.MathUtils.degToRad(this._camera.fov / 2))),
+      this._controls.minDistance * 1.2,
+      this._controls.maxDistance
+    );
+    // Keep the camera's current bearing, move toward the new target.
+    const dir = this._camera.position.clone().sub(this._controls.target).normalize();
+    if (!isFinite(dir.lengthSq()) || dir.lengthSq() < 1e-6) dir.set(0, 0, 1);
+    const destPos = target.clone().add(dir.multiplyScalar(dist));
+    this._animateCamera(destPos, target.clone());
+  }
+
+  // ── Camera views ────────────────────────────────────────────────────────
+
   setView(view) {
-    this.controls.autoRotate = false;
-    const t = this.controls.target.clone();
-    const d = 20;
-    const positions = { front: [t.x, t.y, t.z + d], back: [t.x, t.y, t.z - d], left: [t.x - d, t.y, t.z], right: [t.x + d, t.y, t.z] };
-    if (positions[view]) {
-      this.camera.position.set(...positions[view]);
-      this.controls.update();
-    }
+    const t = this._controls.target.clone();
+    const d = this._camera.position.distanceTo(t);
+    const dirs = {
+      front: new THREE.Vector3(0, 0, 1),
+      back: new THREE.Vector3(0, 0, -1),
+      left: new THREE.Vector3(-1, 0, 0),
+      right: new THREE.Vector3(1, 0, 0),
+    };
+    const dir = dirs[view];
+    if (!dir) return;
+    this._animateCamera(t.clone().add(dir.multiplyScalar(d)), t);
   }
 
   resetCamera() {
-    this.camera.position.set(0, 0, 22);
-    this.controls.target.set(0, 0, 0);
-    this.controls.autoRotate = true;
-    this.controls.update();
+    this.highlight([]);
+    if (this._selected) {
+      this._clearEmphasis(this._selected);
+      this._selected = null;
+    }
+    this._animateCamera(this._homePos.clone(), this._homeTarget.clone());
   }
 
-  onSelect(cb) { this._onSelectCb = cb; }
-  onHover(cb)  { this._onHoverCb  = cb; }
-
-  resize() {
-    const W = this.container.clientWidth, H = this.container.clientHeight;
-    if (!W || !H) return;
-    this.camera.aspect = W / H;
-    this.camera.updateProjectionMatrix();
-    this.renderer.setSize(W, H);
+  _animateCamera(destPos, destTarget) {
+    if (this._reducedMotion) {
+      this._camera.position.copy(destPos);
+      this._controls.target.copy(destTarget);
+      this._controls.update();
+      return;
+    }
+    this._camAnim = {
+      fromPos: this._camera.position.clone(),
+      fromTarget: this._controls.target.clone(),
+      toPos: destPos,
+      toTarget: destTarget,
+      t: 0,
+      duration: 0.8,
+    };
   }
+
+  // ── Frame loop ──────────────────────────────────────────────────────────
 
   _animate() {
-    if (this._disposed) return;
-    requestAnimationFrame(() => this._animate());
-    const t = performance.now() * 0.001;
-    this._highlightOverlays.forEach(o => { o.material.opacity = 0.10 + Math.sin(t * 2.8) * 0.06; });
-    this.controls.update();
-    this.renderer.render(this.scene, this.camera);
+    const dt = this._clock.getDelta();
+    const anim = this._camAnim;
+    if (anim) {
+      anim.t = Math.min(anim.t + dt / anim.duration, 1);
+      const e = anim.t < 0.5 ? 4 * anim.t ** 3 : 1 - (-2 * anim.t + 2) ** 3 / 2; // easeInOutCubic
+      this._camera.position.lerpVectors(anim.fromPos, anim.toPos, e);
+      this._controls.target.lerpVectors(anim.fromTarget, anim.toTarget, e);
+      if (anim.t >= 1) this._camAnim = null;
+    }
+    if (this._regionGlow.length && !this._reducedMotion) {
+      const pulse = 0.12 + 0.08 * (0.5 + 0.5 * Math.sin(this._clock.elapsedTime * 2.4));
+      for (const glow of this._regionGlow) glow.material.opacity = pulse;
+    }
+    this._controls.update();
+    this._renderer.render(this._scene, this._camera);
+  }
+
+  // ── Public wiring ───────────────────────────────────────────────────────
+
+  onHover(cb) { this._hoverCb = cb; }
+  onSelect(cb) { this._selectCb = cb; }
+  onLayerLoaded(cb) { this._progressCb = cb; }
+
+  get activeLayer() { return this._activeLayer; }
+
+  setAccentColor(color) {
+    this._accent = new THREE.Color(color);
+    for (const glow of this._regionGlow) glow.material.color.copy(this._accent);
+    if (this._selected) this._applyEmphasis(this._selected, 0.75);
+    if (this._hovered && this._hovered !== this._selected) this._applyEmphasis(this._hovered, 0.35);
+  }
+
+  resize() {
+    const w = this.container.clientWidth;
+    const h = this.container.clientHeight;
+    if (!w || !h) return;
+    this._camera.aspect = w / h;
+    this._camera.updateProjectionMatrix();
+    this._renderer.setSize(w, h);
   }
 
   dispose() {
-    this._disposed = true;
-    this._resizeObs?.disconnect();
-    this.clearHighlight();
-    this._clearHoverOverlay();
-    this.controls.dispose();
-    this.renderer.dispose();
-    this.scene.traverse(c => { if (c.isMesh) { c.geometry.dispose(); c.material?.dispose(); } });
-    this.renderer.domElement.parentNode?.removeChild(this.renderer.domElement);
+    this._renderer.setAnimationLoop(null);
+    this._resizeObserver?.disconnect();
+    this._renderer.dispose();
+    this._renderer.domElement.remove();
   }
 }
 
-// Export the same way as before so index.html works without changes
-window.AnatomyViewer = AnatomyViewer;
-// Also expose REGIONS for the UI
-window.ANATOMY_REGIONS = REGIONS;
+
+
+
+
+
