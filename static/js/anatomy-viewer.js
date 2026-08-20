@@ -22,6 +22,11 @@
  *     .onHover(cb) .onSelect(cb) .highlight(regionIds) .focusRegion(id)
  *     .setLayer(name) .setView(name) .resetCamera() .resize()
  *     .search(query) .selectStructure(id) .ready (Promise)
+ *
+ * Deep-dive scenes (per-organ GLBs from scripts/build_scene_assets.py):
+ *   .listScenes() .setScene(id|null) .activeScene
+ *   .focusStructures(ids) .highlightStructures(ids, mode) .clearStructureHighlights()
+ *   mode: 'highlight' | 'stenosis' | 'inflammation' | 'flow' | 'none'
  */
 
 import * as THREE from 'three';
@@ -98,6 +103,38 @@ const LAYERS = {
 
 const LAYER_ORDER = ['skin', 'skeleton', 'muscles', 'organs', 'vascular', 'nerves'];
 
+// Deep-dive scene meshes are colored by tissue category inferred from the
+// structure name (scene GLBs mix vessels, muscle, bone and organ tissue).
+const SCENE_MATERIALS = {
+  artery: { color: 0xb03a3a, roughness: 0.4 },
+  vein: { color: 0x4a5f9e, roughness: 0.45 },
+  nerve: { color: 0xd8c94a, roughness: 0.5 },
+  bone: { color: 0xe8e3d5, roughness: 0.55 },
+  tooth: { color: 0xf2eee2, roughness: 0.35 },
+  default: { color: 0xc4756a, roughness: 0.45 },
+};
+
+function sceneCategoryFor(name) {
+  const n = (name || '').toLowerCase();
+  if (n.includes('tooth')) return 'tooth';
+  if (n.includes('artery') || n.includes('aorta') || n.includes('arterial') ||
+      n.includes('pulmonary trunk')) return 'artery';
+  if (n.includes('vein') || n.includes('vena cava') || n.includes('venous') ||
+      n.includes('sinus')) return 'vein';
+  if (n.includes('nerve')) return 'nerve';
+  if (n.includes('bone') || n.includes('vertebra') || n.includes('rib') ||
+      n.includes('skull') || n.includes('mandible') || n.includes('maxilla')) return 'bone';
+  return 'default';
+}
+
+// Procedural overlay palette (per-overlay accents used by the story player).
+const OVERLAY_COLORS = {
+  highlight: 0x22d3ee,
+  stenosis: 0xe4574f,
+  inflammation: 0xf59e0b,
+  flow: 0x38bdf8,
+};
+
 function makeLayerMaterial(name) {
   const cfg = LAYERS[name];
   const mat = new THREE.MeshStandardMaterial({
@@ -146,6 +183,17 @@ export class AnatomyViewer {
     this._raycaster = new THREE.Raycaster();
     this._pointer = new THREE.Vector2();
     this._pointerDown = null;
+
+    // Deep-dive scene state
+    this._sceneIndex = null; // scenes.json payload (lazy)
+    this._sceneIndexPromise = null;
+    this._sceneGroups = new Map(); // scene id -> THREE.Group
+    this._sceneLoaded = new Map(); // scene id -> Promise
+    this._sceneStructures = new Map(); // scene id -> Map(id -> {id,name,center,size})
+    this._sceneMaterials = new Map(); // category -> shared material
+    this._activeScene = null; // scene id or null (whole body)
+    this._structureGlow = []; // overlay meshes from highlightStructures
+    this._overlayMeshes = new Set(); // emphasized meshes to restore
 
     // Camera animation
     this._camAnim = null;
@@ -315,10 +363,292 @@ export class AnatomyViewer {
     return promise;
   }
 
+  // ── Deep-dive scenes ────────────────────────────────────────────────────
+
+  _ensureSceneIndex() {
+    if (!this._sceneIndexPromise) {
+      this._sceneIndexPromise = fetch(`${ASSET_BASE}/scenes/scenes.json`)
+        .then((r) => {
+          if (!r.ok) throw new Error(`scenes.json HTTP ${r.status}`);
+          return r.json();
+        })
+        .then((data) => {
+          this._sceneIndex = data;
+          for (const [id, scene] of Object.entries(data.scenes || {})) {
+            const byId = new Map();
+            for (const s of scene.structures) byId.set(s.id, s);
+            this._sceneStructures.set(id, byId);
+          }
+          return data;
+        });
+    }
+    return this._sceneIndexPromise;
+  }
+
+  /** [{id, label, count}] for the scene switcher UI. */
+  async listScenes() {
+    const data = await this._ensureSceneIndex();
+    return Object.entries(data.scenes || {}).map(([id, s]) => ({
+      id, label: s.label, count: s.structures.length,
+    }));
+  }
+
+  get activeScene() { return this._activeScene; }
+
+  _sceneMaterial(category) {
+    let mat = this._sceneMaterials.get(category);
+    if (!mat) {
+      const cfg = SCENE_MATERIALS[category] || SCENE_MATERIALS.default;
+      mat = new THREE.MeshStandardMaterial({
+        color: cfg.color, roughness: cfg.roughness, metalness: 0.0, envMapIntensity: 0.7,
+      });
+      this._sceneMaterials.set(category, mat);
+    }
+    return mat;
+  }
+
+  _ensureScene(id) {
+    if (this._sceneLoaded.has(id)) return this._sceneLoaded.get(id);
+    const promise = this._ensureSceneIndex().then(() => new Promise((resolve, reject) => {
+      const byId = this._sceneStructures.get(id);
+      if (!byId) { reject(new Error(`unknown scene ${id}`)); return; }
+      const group = new THREE.Group();
+      group.name = `scene-${id}`;
+      group.visible = false;
+      this._root.add(group);
+      this._sceneGroups.set(id, group);
+      const loader = new GLTFLoader();
+      loader.setMeshoptDecoder(MeshoptDecoder);
+      loader.load(
+        `${ASSET_BASE}/scenes/${id}.glb`,
+        (gltf) => {
+          gltf.scene.traverse((node) => {
+            if (!node.isMesh) return;
+            let sid = null;
+            for (let n = node; n && !sid; n = n.parent) {
+              if (byId.has(n.name)) sid = n.name;
+            }
+            node.userData.structureId = sid;
+            node.userData.scene = id;
+            const info = sid ? byId.get(sid) : null;
+            node.material = this._sceneMaterial(sceneCategoryFor(info?.name));
+            if (sid) {
+              const key = `${id}:${sid}`;
+              if (!this._meshById.has(key)) this._meshById.set(key, node);
+            }
+          });
+          group.add(gltf.scene);
+          resolve();
+        },
+        undefined,
+        (err) => reject(err)
+      );
+    })).then(() => { this._progressCb?.(`scene:${id}`); });
+    this._sceneLoaded.set(id, promise);
+    return promise;
+  }
+
+  /**
+   * Enter a deep-dive scene (heart/eyes/teeth/brain) or return to the whole
+   * body with setScene(null). Resolves when the scene assets are visible.
+   */
+  async setScene(id) {
+    if (!id) {
+      if (!this._activeScene) return;
+      this._exitScene(true);
+      return;
+    }
+    if (this._activeScene === id) return;
+    await this._ensureScene(id);
+    this.highlight([]); // whole-body region markers don't belong in a scene
+    this.clearStructureHighlights();
+    this._setHover(null);
+    if (this._selected) { this._clearEmphasis(this._selected); this._selected = null; }
+    this._activeScene = id;
+    // Hide the whole-body layers; show only this scene.
+    for (const name of LAYER_ORDER) this._layerGroups.get(name).visible = false;
+    for (const [sid, g] of this._sceneGroups) g.visible = sid === id;
+    // Tiny organs (eye ~2.5cm in body units) need a much closer near limit.
+    const b = this._sceneIndex.scenes[id].bounds;
+    const min = new THREE.Vector3(...b.min);
+    const max = new THREE.Vector3(...b.max);
+    const span = min.distanceTo(max);
+    this._controls.minDistance = Math.max(span * 0.12, 0.004);
+    const center = min.clone().add(max).multiplyScalar(0.5);
+    this._focusPoint(center, Math.max(span * 1.25, 0.02));
+  }
+
+  _exitScene(resetCam) {
+    this.clearStructureHighlights();
+    this._setHover(null);
+    if (this._selected) { this._clearEmphasis(this._selected); this._selected = null; }
+    this._activeScene = null;
+    for (const g of this._sceneGroups.values()) g.visible = false;
+    this._controls.minDistance = 0.12;
+    this._applyLayerVisibility();
+    if (resetCam) this._animateCamera(this._homePos.clone(), this._homeTarget.clone());
+  }
+
+  /** Structure metadata for hover/select — body index or active-scene index. */
+  _structureInfo(sid, sceneId) {
+    if (sceneId) {
+      const s = this._sceneStructures.get(sceneId)?.get(sid);
+      if (s) {
+        return {
+          id: s.id, name: s.name, center: s.center, size: s.size,
+          layer: this._sceneIndex?.scenes?.[sceneId]?.label?.toLowerCase() || sceneId,
+          region: null, group: null, scene: sceneId,
+        };
+      }
+    }
+    return this._structures.get(sid) || null;
+  }
+
+  /** Meshes for a structure id in the active scene (fallback: body layers). */
+  _meshesFor(id) {
+    const out = [];
+    if (this._activeScene) {
+      const m = this._meshById.get(`${this._activeScene}:${id}`);
+      if (m) out.push(m);
+    }
+    if (!out.length) {
+      const m = this._meshById.get(id);
+      if (m) out.push(m);
+    }
+    return out;
+  }
+
+  /**
+   * Make the given body structures visible and pickable: ensure their
+   * layers are loaded and switch to the right layer ('all' when the ids
+   * span several). Used by the story player when a story has no deep-dive
+   * scene — without this, overlays would sit under the opaque skin layer
+   * (or on meshes that were never loaded). No-op in scene mode.
+   */
+  async prepareForStructures(ids) {
+    if (this._activeScene) return;
+    const layers = new Set();
+    for (const id of ids || []) {
+      const s = this._structures.get(id);
+      if (s?.layer && s.layer !== 'skin') layers.add(s.layer);
+    }
+    if (!layers.size) return;
+    await this._metaReady;
+    await Promise.all([...layers].map((l) => this._ensureLayer(l)));
+    const target = layers.size === 1 ? [...layers][0] : 'all';
+    if (target === 'all') await Promise.all(LAYER_ORDER.map((l) => this._ensureLayer(l)));
+    if (this._activeLayer !== target) {
+      this._activeLayer = target;
+      this._applyLayerVisibility();
+    }
+  }
+
+  /** Fit the camera to the union bounds of the given structure ids. */
+  focusStructures(ids) {
+    const min = new THREE.Vector3(Infinity, Infinity, Infinity);
+    const max = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+    let found = 0;
+    for (const id of ids || []) {
+      const info = this._structureInfo(id, this._activeScene) || this._structures.get(id);
+      if (!info?.center || !info?.size) continue;
+      const c = info.center, sz = info.size;
+      min.min(new THREE.Vector3(c[0] - sz[0] / 2, c[1] - sz[1] / 2, c[2] - sz[2] / 2));
+      max.max(new THREE.Vector3(c[0] + sz[0] / 2, c[1] + sz[1] / 2, c[2] + sz[2] / 2));
+      found++;
+    }
+    if (!found) return false;
+    const center = min.clone().add(max).multiplyScalar(0.5);
+    const span = Math.max(min.distanceTo(max), 0.01);
+    this._focusPoint(center, span * 1.5);
+    return true;
+  }
+
+  /**
+   * Procedural overlays for the visual story player.
+   * mode: highlight | stenosis | inflammation | flow | none
+   */
+  highlightStructures(ids, mode = 'highlight') {
+    this.clearStructureHighlights();
+    if (!ids?.length || mode === 'none') return 0;
+    const color = new THREE.Color(OVERLAY_COLORS[mode] || OVERLAY_COLORS.highlight);
+    let phase = 0;
+    let count = 0;
+    for (const id of ids) {
+      for (const mesh of this._meshesFor(id)) {
+        if (!mesh.userData.ownMaterial) {
+          mesh.userData.sharedMaterial = mesh.material;
+          mesh.material = mesh.material.clone();
+          mesh.userData.ownMaterial = true;
+        }
+        mesh.material.emissive = color.clone();
+        mesh.material.emissiveIntensity = 0.55;
+        mesh.userData.overlayPhase = phase;
+        this._overlayMeshes.add(mesh);
+        count++;
+      }
+      const info = this._structureInfo(id, this._activeScene) || this._structures.get(id);
+      if (info?.center && info?.size) {
+        if (mode === 'stenosis') this._addStenosisRing(info, color);
+        else if (mode === 'inflammation') this._addGlowSphere(info, color);
+      }
+      phase += 0.9;
+    }
+    this._overlayMode = mode;
+    return count;
+  }
+
+  _addStenosisRing(info, color) {
+    // A pinch ring around the structure — the classic "narrowed vessel" cue.
+    const r = Math.max(Math.min(info.size[0], info.size[2]) * 0.75, 0.0015);
+    const geo = new THREE.TorusGeometry(r, r * 0.22, 12, 36);
+    const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85, depthWrite: false });
+    const ring = new THREE.Mesh(geo, mat);
+    ring.position.set(...info.center);
+    ring.rotation.x = Math.PI / 2;
+    ring.raycast = () => {};
+    ring.userData.overlaySpin = true;
+    this._root.add(ring);
+    this._structureGlow.push(ring);
+  }
+
+  _addGlowSphere(info, color) {
+    const r = Math.max(...info.size) * 0.75;
+    const geo = new THREE.SphereGeometry(Math.max(r, 0.002), 24, 16);
+    const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.14, depthWrite: false });
+    const glow = new THREE.Mesh(geo, mat);
+    glow.position.set(...info.center);
+    glow.raycast = () => {};
+    glow.userData.overlayPulse = true;
+    this._root.add(glow);
+    this._structureGlow.push(glow);
+  }
+
+  clearStructureHighlights() {
+    for (const mesh of this._overlayMeshes) {
+      if (mesh === this._selected || mesh === this._hovered) {
+        // Re-apply the ordinary emphasis rather than dropping it.
+        this._clearEmphasis(mesh);
+        this._applyEmphasis(mesh, mesh === this._selected ? 0.75 : 0.35);
+      } else {
+        this._clearEmphasis(mesh);
+      }
+      delete mesh.userData.overlayPhase;
+    }
+    this._overlayMeshes.clear();
+    for (const m of this._structureGlow) {
+      m.parent?.remove(m);
+      m.geometry.dispose();
+      m.material.dispose();
+    }
+    this._structureGlow = [];
+    this._overlayMode = null;
+  }
+
   // ── Layer system ────────────────────────────────────────────────────────
 
   /** layer: skin | muscles | skeleton | organs | vascular | nerves | all */
   setLayer(layer) {
+    if (this._activeScene) this._exitScene(false); // layer buttons leave scene mode
     this._activeLayer = layer;
     const needed = layer === 'all' ? [...LAYER_ORDER] : [layer];
     // Always keep skeleton available as an anatomical anchor for non-skin views.
@@ -330,6 +660,7 @@ export class AnatomyViewer {
   }
 
   _applyLayerVisibility() {
+    if (this._activeScene) return; // scene mode owns visibility
     const layer = this._activeLayer;
     const skinMat = this._materials.get('skin');
     for (const name of LAYER_ORDER) {
@@ -379,17 +710,22 @@ export class AnatomyViewer {
     );
     this._raycaster.setFromCamera(this._pointer, this._camera);
     const targets = [];
-    for (const name of LAYER_ORDER) {
-      const g = this._layerGroups.get(name);
-      // In ghost mode the skin is visible but should not swallow picks.
-      if (!g.visible) continue;
-      if (name === 'skin' && this._activeLayer !== 'skin') continue;
-      targets.push(g);
+    if (this._activeScene) {
+      const g = this._sceneGroups.get(this._activeScene);
+      if (g) targets.push(g);
+    } else {
+      for (const name of LAYER_ORDER) {
+        const g = this._layerGroups.get(name);
+        // In ghost mode the skin is visible but should not swallow picks.
+        if (!g.visible) continue;
+        if (name === 'skin' && this._activeLayer !== 'skin') continue;
+        targets.push(g);
+      }
     }
     const hits = this._raycaster.intersectObjects(targets, true);
     for (const hit of hits) {
       const sid = hit.object?.userData?.structureId;
-      if (sid && this._structures.has(sid)) return hit.object;
+      if (sid && this._structureInfo(sid, hit.object.userData.scene)) return hit.object;
     }
     return null;
   }
@@ -420,18 +756,20 @@ export class AnatomyViewer {
     if (mesh === this._hovered) return;
     if (this._hovered && this._hovered !== this._selected) {
       this._clearEmphasis(this._hovered);
+      this._restoreOverlay(this._hovered);
     }
     this._hovered = mesh;
     if (mesh) {
       if (mesh !== this._selected) this._applyEmphasis(mesh, 0.35);
-      const s = this._structures.get(mesh.userData.structureId);
+      const s = this._structureInfo(mesh.userData.structureId, mesh.userData.scene);
       this._hoverCb?.({
-        region: s.region,
+        region: s.region || null,
         label: this._structureLabel(s),
-        layer: s.layer,
+        layer: s.layer || null,
         structure: s.id,
         structureName: s.name,
         group: s.group || null,
+        scene: mesh.userData.scene || null,
       });
       this._renderer.domElement.style.cursor = 'pointer';
     } else {
@@ -467,26 +805,54 @@ export class AnatomyViewer {
     }
   }
 
+  /** After hover/select emphasis ends, restore any story-overlay tint. */
+  _restoreOverlay(mesh) {
+    if (!this._overlayMeshes.has(mesh) || !this._overlayMode) return;
+    if (!mesh.userData.ownMaterial) {
+      mesh.userData.sharedMaterial = mesh.material;
+      mesh.material = mesh.material.clone();
+      mesh.userData.ownMaterial = true;
+    }
+    const color = new THREE.Color(OVERLAY_COLORS[this._overlayMode] || OVERLAY_COLORS.highlight);
+    mesh.material.emissive = color;
+    mesh.material.emissiveIntensity = 0.55;
+  }
+
   _selectMesh(mesh, { focus = true } = {}) {
-    if (this._selected && this._selected !== mesh) this._clearEmphasis(this._selected);
+    if (this._selected && this._selected !== mesh) {
+      this._clearEmphasis(this._selected);
+      this._restoreOverlay(this._selected);
+    }
     this._selected = mesh;
     this._applyEmphasis(mesh, 0.75);
-    const s = this._structures.get(mesh.userData.structureId);
+    const s = this._structureInfo(mesh.userData.structureId, mesh.userData.scene);
     if (focus) this._focusPoint(new THREE.Vector3(...s.center), Math.max(...s.size) * 2.2);
     this._selectCb?.({
-      region: s.region,
+      region: s.region || null,
       label: this._structureLabel(s),
-      layer: s.layer,
+      layer: s.layer || null,
       structure: s.id,
       structureName: s.name,
       group: s.group || null,
+      scene: mesh.userData.scene || null,
     });
   }
 
   /** Programmatic selection by structure id (used by search). */
   async selectStructure(id) {
+    // In scene mode, prefer the structure inside the active scene.
+    if (this._activeScene) {
+      const info = this._sceneStructures.get(this._activeScene)?.get(id);
+      if (info) {
+        const mesh = this._meshById.get(`${this._activeScene}:${id}`);
+        if (mesh) { this._selectMesh(mesh, { focus: true }); return true; }
+        this._focusPoint(new THREE.Vector3(...info.center), Math.max(...info.size) * 2.2);
+        return false;
+      }
+    }
     const s = this._structures.get(id);
     if (!s) return false;
+    if (this._activeScene) this._exitScene(false); // body structure — leave scene mode
     await this._ensureLayer(s.layer === 'skin' ? 'skin' : s.layer);
     if (this._activeLayer !== s.layer && this._activeLayer !== 'all') {
       this._activeLayer = s.layer;
@@ -502,10 +868,27 @@ export class AnatomyViewer {
     return true;
   }
 
-  /** Name search over all structures. Returns top `limit` matches. */
+  /** Name search over all structures. Returns top `limit` matches.
+   *  In scene mode, matches inside the active scene rank first. */
   search(query, limit = 12) {
     const q = (query || '').trim().toLowerCase();
     if (q.length < 2) return [];
+    const sceneMatches = [];
+    if (this._activeScene) {
+      const byId = this._sceneStructures.get(this._activeScene);
+      const label = this._sceneIndex?.scenes?.[this._activeScene]?.label || this._activeScene;
+      for (const s of byId?.values() || []) {
+        if (s.name.toLowerCase().includes(q)) {
+          sceneMatches.push({
+            id: s.id, name: s.name,
+            layer: label.toLowerCase(), region: null, regionLabel: label,
+            scene: this._activeScene,
+          });
+          if (sceneMatches.length >= limit) break;
+        }
+      }
+      sceneMatches.sort((a, b) => a.name.length - b.name.length);
+    }
     const starts = [];
     const contains = [];
     for (const item of this._searchList) {
@@ -514,13 +897,17 @@ export class AnatomyViewer {
       else if (idx > 0) contains.push(item);
       if (starts.length >= limit) break;
     }
-    return starts.concat(contains).slice(0, limit).map((item) => ({
+    const body = starts.concat(contains).map((item) => ({
       id: item.id,
       name: item.name,
       layer: item.layer,
       region: item.region,
       regionLabel: REGIONS[item.region]?.label || item.region,
     }));
+    const seen = new Set(sceneMatches.map((m) => m.id));
+    return sceneMatches
+      .concat(body.filter((m) => !seen.has(m.id)))
+      .slice(0, limit);
   }
 
   // ── Region highlight & focus (backend anatomy context) ──────────────────
@@ -592,7 +979,19 @@ export class AnatomyViewer {
     this.highlight([]);
     if (this._selected) {
       this._clearEmphasis(this._selected);
+      this._restoreOverlay(this._selected);
       this._selected = null;
+    }
+    if (this._activeScene) {
+      // Re-fit to the active scene instead of the whole-body home view.
+      const b = this._sceneIndex?.scenes?.[this._activeScene]?.bounds;
+      if (b) {
+        const min = new THREE.Vector3(...b.min);
+        const max = new THREE.Vector3(...b.max);
+        const center = min.clone().add(max).multiplyScalar(0.5);
+        this._focusPoint(center, Math.max(min.distanceTo(max) * 1.25, 0.02));
+        return;
+      }
     }
     this._animateCamera(this._homePos.clone(), this._homeTarget.clone());
   }
@@ -629,6 +1028,21 @@ export class AnatomyViewer {
     if (this._regionGlow.length && !this._reducedMotion) {
       const pulse = 0.12 + 0.08 * (0.5 + 0.5 * Math.sin(this._clock.elapsedTime * 2.4));
       for (const glow of this._regionGlow) glow.material.opacity = pulse;
+    }
+    if (!this._reducedMotion) {
+      const t = this._clock.elapsedTime;
+      for (const m of this._structureGlow) {
+        if (m.userData.overlayPulse) m.material.opacity = 0.1 + 0.1 * (0.5 + 0.5 * Math.sin(t * 2.8));
+        if (m.userData.overlaySpin) m.rotation.z = t * 0.7;
+      }
+      if (this._overlayMode === 'flow' && this._overlayMeshes.size) {
+        // Traveling emphasis wave — reads as directional flow along vessels.
+        for (const mesh of this._overlayMeshes) {
+          if (mesh === this._selected || mesh === this._hovered) continue;
+          const ph = mesh.userData.overlayPhase || 0;
+          mesh.material.emissiveIntensity = 0.3 + 0.45 * (0.5 + 0.5 * Math.sin(t * 3.0 - ph));
+        }
+      }
     }
     this._controls.update();
     this._renderer.render(this._scene, this._camera);

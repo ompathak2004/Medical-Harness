@@ -20,5 +20,6 @@ class ChatResponse(BaseModel):
     followups: list[str] = []
     conversation_id: str
     anatomy_context: dict | None = None
+    visual_story: dict | None = None
     emergency: bool = False
     emergency_message: str = ""

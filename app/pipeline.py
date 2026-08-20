@@ -47,6 +47,7 @@ from app.prompts import (
 )
 from app.tools.anatomy import detect_anatomy_context
 from app.tools.clinical import TOOL_REGISTRY
+from app.tools.story import generate_visual_story
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,7 @@ def _empty_result(**overrides) -> dict:
         "tool_results": [],
         "followups": [],
         "anatomy_context": None,
+        "visual_story": None,
         "emergency": False,
         "emergency_message": "",
     }
@@ -91,6 +93,7 @@ class AgentPipeline:
         self.max_evidence_articles = settings.max_evidence_articles
         self.max_tldr_chars = settings.max_tldr_chars
         self.max_summary_chars = settings.max_summary_chars
+        self.visual_story_enabled = settings.visual_story_enabled
         self.step_cache = step_cache if step_cache is not None else TTLCache(
             max_entries=settings.step_cache_entries,
             ttl_seconds=settings.step_cache_ttl_seconds,
@@ -211,10 +214,14 @@ class AgentPipeline:
                     )
         answer = "".join(answer_parts)
 
-        # --- Step 4: safety review ---
+        # --- Step 4: safety review + visual story (independent, concurrent) ---
         yield ("step", {"step": "safety", "message": "Verifying answer safety…"})
+        story_task = asyncio.create_task(
+            self._visual_story(question, answer, evidence_result)
+        )
         answer = await self._safety_check(question, answer, evidence_result)
         anatomy_context = await anatomy_task
+        visual_story = await story_task
 
         logger.info(
             "pipeline.answer conversation_id=%s tools=%d articles=%d answer_chars=%d elapsed=%.1fs",
@@ -231,6 +238,7 @@ class AgentPipeline:
             tool_results=tool_results,
             followups=evidence_result.get("followups", []),
             anatomy_context=anatomy_context,
+            visual_story=visual_story,
         ))
 
     # ------------------------------------------------------------------
@@ -311,6 +319,28 @@ class AgentPipeline:
             return await self._cached_step("anatomy", conv_text, compute)
         except Exception:
             logger.exception("pipeline.anatomy failed, continuing without it")
+            return None
+
+    async def _visual_story(
+        self, question: str, answer: str, evidence_result: dict
+    ) -> dict | None:
+        """Grounded 3D walkthrough plan for the answered question.
+
+        Cached on the question alone (not the streamed answer, whose exact
+        wording varies run to run) — the story explains the condition, which
+        is a function of the question, and cached repeats stay consistent.
+        """
+        if not self.visual_story_enabled:
+            return None
+        articles = evidence_result.get("articles", [])[: self.max_evidence_articles]
+
+        async def compute():
+            return await generate_visual_story(question, answer, articles, self.llm)
+
+        try:
+            return await self._cached_step("visual_story", question, compute)
+        except Exception:
+            logger.exception("pipeline.visual_story failed, continuing without it")
             return None
 
     async def _emergency_guidance(self, conv_text: str) -> str:

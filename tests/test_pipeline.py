@@ -302,3 +302,48 @@ class TestTokenBudgets:
         assert f"[{p.max_evidence_articles + 1}]" not in user
         assert "x" * (p.max_tldr_chars + 10) not in user
         assert "y" * (p.max_summary_chars + 10) not in user
+
+
+class TestVisualStory:
+    STORY_KEY = "storyboard planner"
+
+    def make_story_pipeline(self, story_response: dict) -> AgentPipeline:
+        script = {
+            TRIAGE_KEY: json.dumps({"action": "answer", "follow_up_questions": []}),
+            TOOLS_KEY: json.dumps({"selected_tools": []}),
+            ANATOMY_KEY: json.dumps({"has_anatomy": False}),
+            SAFETY_KEY: json.dumps({"is_safe": True, "issues": [], "revised_answer": ""}),
+            EXTRACT_KEY: json.dumps({}),
+            self.STORY_KEY: json.dumps(story_response),
+        }
+        return AgentPipeline(llm=FakeLLM(script), evidence=FakeEvidence())
+
+    async def test_answer_result_carries_grounded_story(self):
+        p = self.make_story_pipeline({
+            "has_story": True,
+            "title": "Blocked coronary artery",
+            "steps": [{
+                "title": "The blockage",
+                "text": "Plaque narrows the artery.",
+                "anatomy_terms": ["coronary artery"],
+                "overlay": "stenosis",
+                "citations": [1],
+            }],
+        })
+        result = await p.run(["my heart artery is choked"], "cid")
+        story = result["visual_story"]
+        assert story is not None
+        assert story["scene"] == "heart"
+        assert story["steps"][0]["structure_ids"]
+        assert story["steps"][0]["overlay"] == "stenosis"
+
+    async def test_story_none_when_llm_declines(self):
+        p = self.make_story_pipeline({"has_story": False, "steps": []})
+        result = await p.run(["general question"], "cid")
+        assert result["visual_story"] is None
+
+    async def test_story_disabled_by_config(self):
+        p = self.make_story_pipeline({"has_story": True, "steps": []})
+        p.visual_story_enabled = False
+        result = await p.run(["my heart artery is choked"], "cid")
+        assert result["visual_story"] is None

@@ -12,6 +12,7 @@ from fastapi.responses import StreamingResponse
 from app import __version__
 from app.config import get_settings
 from app.schemas import ChatRequest, ChatResponse
+from app.tools.grounding import ground_term
 
 logger = logging.getLogger(__name__)
 
@@ -102,3 +103,18 @@ async def metrics(request: Request) -> dict:
         "step_cache": pipeline.step_cache.stats(),
         "evidence_cache": pipeline.evidence_cache.stats(),
     }
+
+
+@router.get("/anatomy/ground")
+async def anatomy_ground(term: str) -> dict:
+    """Deterministic term -> 3D structure resolution (no LLM, no PHI).
+
+    Resolves a free-text anatomical term against the BodyParts3D/FMA
+    grounding index. Returns matched concept name, displayable structure
+    ids, and the deep-dive scene that best covers them.
+    """
+    term = (term or "").strip()
+    if not term or len(term) > 200:
+        raise HTTPException(status_code=400, detail="term must be 1-200 characters")
+    result = ground_term(term)
+    return {"query": term, "result": result}

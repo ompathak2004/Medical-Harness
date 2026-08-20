@@ -123,3 +123,32 @@ def test_chat_stream_sse_events(client):
             data_line = [l for l in block.split("\n") if l.startswith("data:")][0]
             payload = json.loads(data_line[5:])
             assert payload["type"] == "answer"
+
+
+# ── /api/anatomy/ground ──────────────────────────────────────────────────
+
+
+def test_anatomy_ground_resolves_term(client):
+    resp = client.get("/api/anatomy/ground", params={"term": "heart artery"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["query"] == "heart artery"
+    assert body["result"]["matched_name"] == "coronary artery"
+    assert body["result"]["scene"] == "heart"
+    assert body["result"]["structure_ids"]
+
+
+def test_anatomy_ground_unknown_term_returns_null_result(client):
+    resp = client.get("/api/anatomy/ground", params={"term": "flux capacitor"})
+    assert resp.status_code == 200
+    assert resp.json()["result"] is None
+
+
+def test_anatomy_ground_rejects_empty_term(client):
+    resp = client.get("/api/anatomy/ground", params={"term": "   "})
+    assert resp.status_code == 400
+
+
+def test_anatomy_ground_rejects_oversized_term(client):
+    resp = client.get("/api/anatomy/ground", params={"term": "x" * 201})
+    assert resp.status_code == 400

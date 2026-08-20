@@ -46,6 +46,7 @@ const anatomyHoverLabel = document.getElementById('anatomy-hover-label');
 const anatomyInfoPanel = document.getElementById('anatomy-info-panel');
 const anatomyRegionPill = document.getElementById('anatomy-region-pill');
 const anatomyLayerBar = document.querySelector('.anatomy-layer-bar');
+const anatomySceneBar = document.getElementById('anatomy-scene-bar');
 
 const panelBackdrop = document.getElementById('panel-backdrop');
 const citationTooltip = document.getElementById('citation-tooltip');
@@ -331,6 +332,7 @@ function renderMsgActions(msgId) {
 
 const messageArticles = new Map();
 const messageAnswerText = new Map();
+const messageStories = new Map(); // msgId -> visual_story payload
 
 // ────────────────────────────────────────────────────────────────────────
 // FINALIZE A RESULT INTO THE ASSISTANT MESSAGE SHELL
@@ -361,12 +363,20 @@ function finalizeAnswer(wrap, data, msgId) {
   messageArticles.set(msgId, currentArticles);
   messageAnswerText.set(msgId, data.answer || '');
   if (data.anatomy_context?.has_anatomy) currentAnatomyContext = data.anatomy_context;
+  const story = data.visual_story;
+  const hasStory = !!(story && story.steps?.length);
+  if (hasStory) messageStories.set(msgId, story);
 
   const msgEl = wrap.querySelector('.msg.assistant');
   let html = '';
   if (data.tool_results?.length) html += data.tool_results.map(renderToolCard).join('');
   html += `<div class="answer-body">${renderAnswerBody(data.answer || '', currentArticles, msgId)}</div>`;
   html += renderSourcesGrid(currentArticles, msgId);
+  if (hasStory) {
+    html += `<button type="button" class="story-open-btn" data-action="open-story" data-msg-id="${escapeAttr(msgId)}">
+      ${svg(ICON.cube)}See it in 3D — ${escapeHtml(story.title || 'guided walkthrough')}
+    </button>`;
+  }
   if (currentAnatomyContext) html += anatomyToggleButtonHtml();
   if ((data.answer || '').trim()) html += renderMsgActions(msgId);
   msgEl.innerHTML = html;
@@ -521,12 +531,18 @@ function anatomySubPartsFor(regionId) {
   return (currentAnatomyContext?.regions || []).find(r => r.id === regionId)?.sub_parts || [];
 }
 
+const SCENE_LABELS = { heart: 'Heart', eyes: 'Eyes', teeth: 'Teeth', brain: 'Brain' };
+
 function updateAnatomyBreadcrumb(data) {
   const crumb = document.getElementById('anatomy-breadcrumb');
   if (!crumb) return;
   if (!data) { crumb.hidden = true; return; }
-  const regionLabel = ANATOMY_VIEWER_REGIONS[data.region]?.label || data.region;
-  const parts = ['Body', regionLabel];
+  const parts = ['Body'];
+  if (data.scene) {
+    parts.push(SCENE_LABELS[data.scene] || data.scene);
+  } else if (data.region) {
+    parts.push(ANATOMY_VIEWER_REGIONS[data.region]?.label || data.region);
+  }
   if (data.structureName) parts.push(data.structureName);
   crumb.innerHTML = parts
     .map(p => `<span>${escapeHtml(p)}</span>`)
@@ -535,14 +551,16 @@ function updateAnatomyBreadcrumb(data) {
 }
 
 function onAnatomySelect(data) {
-  if (!data || !data.region) return;
-  selectedRegionId = data.region;
+  if (!data || (!data.region && !data.scene)) return;
+  selectedRegionId = data.region || null;
   selectedStructure = data.structureName
-    ? { name: data.structureName, group: data.group, layer: data.layer }
+    ? { name: data.structureName, group: data.group, layer: data.layer, scene: data.scene || null }
     : null;
-  const regionLabel = ANATOMY_VIEWER_REGIONS[data.region]?.label || data.region;
-  const label = data.structureName || data.label || regionLabel;
-  const subParts = anatomySubPartsFor(data.region);
+  const contextLabel = data.scene
+    ? (SCENE_LABELS[data.scene] || data.scene)
+    : (ANATOMY_VIEWER_REGIONS[data.region]?.label || data.region);
+  const label = data.structureName || data.label || contextLabel;
+  const subParts = data.region ? anatomySubPartsFor(data.region) : [];
   updateAnatomyBreadcrumb(data);
 
   let html = `<div class="anatomy-region-header">
@@ -552,7 +570,7 @@ function onAnatomySelect(data) {
 
   if (data.structureName) {
     html += `<div class="anatomy-structure-meta">
-      ${escapeHtml(regionLabel)}${data.group ? ` · part of ${escapeHtml(data.group)}` : ''}
+      ${escapeHtml(contextLabel)}${data.group ? ` · part of ${escapeHtml(data.group)}` : ''}
     </div>`;
   }
 
@@ -571,9 +589,14 @@ function onAnatomySelect(data) {
 }
 
 function confirmAnatomyRegion() {
-  if (!selectedRegionId) return;
-  const regionLabel = ANATOMY_VIEWER_REGIONS[selectedRegionId]?.label || selectedRegionId;
+  if (!selectedRegionId && !selectedStructure) return;
   closeAnatomyPanel();
+  if (!selectedRegionId && selectedStructure?.name) {
+    // Deep-dive scene structure — no whole-body region attached.
+    submitMessage(`The issue involves my ${selectedStructure.name}.`);
+    return;
+  }
+  const regionLabel = ANATOMY_VIEWER_REGIONS[selectedRegionId]?.label || selectedRegionId;
   if (selectedStructure?.name) {
     submitMessage(`The issue is in my ${regionLabel}, specifically the ${selectedStructure.name}.`);
   } else {
@@ -611,9 +634,153 @@ function closeAnatomyPanel() {
 }
 
 function setAnatomyLayer(layer) {
+  closeStory({ keepPanel: true }); // layer change ends any playing story
   anatomyLayerBar?.querySelectorAll('.layer-btn').forEach(b => b.classList.toggle('active', b.dataset.layer === layer));
-  anatomyViewer?.setLayer(layer);
+  anatomyViewer?.setLayer(layer); // also exits any active deep-dive scene
+  syncSceneBar('');
 }
+
+/** Reflect the active scene in the switcher + panel (layer bar hides in scene mode). */
+function syncSceneBar(sceneId) {
+  anatomySceneBar?.querySelectorAll('.scene-btn').forEach(b =>
+    b.classList.toggle('active', (b.dataset.scene || '') === (sceneId || '')));
+  anatomyPanel.classList.toggle('scene-mode', !!sceneId);
+}
+
+async function setAnatomyScene(sceneId) {
+  initAnatomyViewerIfNeeded();
+  if (!anatomyViewer) return;
+  closeStory({ keepPanel: true }); // manual scene switch ends any playing story
+  const btns = anatomySceneBar?.querySelectorAll('.scene-btn');
+  btns?.forEach(b => { b.disabled = true; });
+  try {
+    await anatomyViewer.setScene(sceneId || null);
+    syncSceneBar(sceneId);
+    updateAnatomyBreadcrumb(sceneId ? { scene: sceneId } : null);
+    anatomyRegionPill.textContent = sceneId ? (SCENE_LABELS[sceneId] || sceneId) : '';
+    anatomyRegionPill.hidden = !sceneId;
+    if (!sceneId) {
+      // Restore the layer-bar state the viewer fell back to.
+      const active = anatomyViewer.activeLayer;
+      anatomyLayerBar?.querySelectorAll('.layer-btn').forEach(b =>
+        b.classList.toggle('active', b.dataset.layer === active));
+    }
+  } catch (err) {
+    console.error('Failed to load scene', sceneId, err);
+  } finally {
+    btns?.forEach(b => { b.disabled = false; });
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// VISUAL STORY PLAYER (guided 3D walkthrough)
+// ────────────────────────────────────────────────────────────────────────
+
+const storyPlayer = document.getElementById('story-player');
+const storyTitleEl = document.getElementById('story-title');
+const storyStepTitleEl = document.getElementById('story-step-title');
+const storyStepTextEl = document.getElementById('story-step-text');
+const storyStepCitesEl = document.getElementById('story-step-citations');
+const storyDotsEl = document.getElementById('story-dots');
+const storyPrevBtn = document.getElementById('story-prev');
+const storyNextBtn = document.getElementById('story-next');
+const storyCloseBtn = document.getElementById('story-close');
+
+let activeStory = null; // { story, msgId, step }
+
+async function openStory(msgId) {
+  const story = messageStories.get(msgId);
+  if (!story || !story.steps?.length) return;
+  openAnatomyPanel();
+  initAnatomyViewerIfNeeded();
+  if (!anatomyViewer) return;
+  activeStory = { story, msgId, step: 0 };
+  anatomyPanel.classList.add('story-mode');
+  storyPlayer.hidden = false;
+  storyTitleEl.textContent = story.title || 'Guided walkthrough';
+  storyDotsEl.innerHTML = story.steps.map((_, i) =>
+    `<button type="button" class="story-dot" data-step="${i}" aria-label="Step ${i + 1}"></button>`
+  ).join('');
+  if (story.scene) {
+    try {
+      await anatomyViewer.setScene(story.scene);
+      syncSceneBar(story.scene);
+      updateAnatomyBreadcrumb({ scene: story.scene });
+      anatomyRegionPill.textContent = SCENE_LABELS[story.scene] || story.scene;
+      anatomyRegionPill.hidden = false;
+    } catch (err) {
+      console.error('Story scene failed to load', err);
+    }
+  }
+  showStoryStep(0);
+}
+
+function showStoryStep(idx) {
+  if (!activeStory) return;
+  const { story } = activeStory;
+  const step = story.steps[idx];
+  if (!step) return;
+  activeStory.step = idx;
+
+  storyStepTitleEl.textContent = `${idx + 1}. ${step.title || ''}`;
+  storyStepTextEl.textContent = step.text || '';
+
+  // Per-step citations link back to the message's source articles.
+  const articles = messageArticles.get(activeStory.msgId) || [];
+  storyStepCitesEl.innerHTML = (step.citations || [])
+    .filter(n => n >= 1 && n <= articles.length)
+    .map(n => `<button type="button" class="story-cite" data-action="story-cite" data-idx="${n - 1}">[${n}] ${escapeHtml((articles[n - 1]?.title || '').slice(0, 42))}${(articles[n - 1]?.title || '').length > 42 ? '…' : ''}</button>`)
+    .join('');
+
+  storyDotsEl.querySelectorAll('.story-dot').forEach((d, i) =>
+    d.classList.toggle('active', i === idx));
+  storyPrevBtn.disabled = idx === 0;
+  storyNextBtn.disabled = idx === story.steps.length - 1;
+
+  if (anatomyViewer) {
+    const ids = step.structure_ids || [];
+    const token = activeStory; // guard against step/story changing mid-await
+    const stepAtCall = idx;
+    (async () => {
+      // Scene-less stories (kidney, lung, …) need the right body layer
+      // loaded & visible before overlays can attach to real meshes.
+      if (!anatomyViewer.activeScene && ids.length) {
+        try { await anatomyViewer.prepareForStructures(ids); }
+        catch (err) { console.error('Story layer prepare failed', err); }
+      }
+      if (activeStory !== token || activeStory.step !== stepAtCall) return;
+      // Reflect any layer switch prepareForStructures made in the layer bar.
+      if (!anatomyViewer.activeScene) {
+        const active = anatomyViewer.activeLayer;
+        anatomyLayerBar?.querySelectorAll('.layer-btn').forEach(b =>
+          b.classList.toggle('active', b.dataset.layer === active));
+      }
+      anatomyViewer.highlightStructures(ids, step.overlay || 'highlight');
+      if (ids.length) anatomyViewer.focusStructures(ids);
+    })();
+  }
+}
+
+function closeStory({ keepPanel = false } = {}) {
+  if (!activeStory) return;
+  activeStory = null;
+  storyPlayer.hidden = true;
+  anatomyPanel.classList.remove('story-mode');
+  anatomyViewer?.clearStructureHighlights();
+  if (!keepPanel) closeAnatomyPanel();
+}
+
+storyPrevBtn?.addEventListener('click', () => activeStory && showStoryStep(activeStory.step - 1));
+storyNextBtn?.addEventListener('click', () => activeStory && showStoryStep(activeStory.step + 1));
+storyCloseBtn?.addEventListener('click', () => closeStory({ keepPanel: true }));
+storyDotsEl?.addEventListener('click', e => {
+  const dot = e.target.closest('.story-dot');
+  if (dot) showStoryStep(parseInt(dot.dataset.step, 10));
+});
+storyStepCitesEl?.addEventListener('click', e => {
+  const cite = e.target.closest('.story-cite');
+  if (cite && activeStory) openArticleSidebar(activeStory.msgId, parseInt(cite.dataset.idx, 10));
+});
 
 // ────────────────────────────────────────────────────────────────────────
 // STATUS PILL (online/offline)
@@ -747,8 +914,11 @@ function startNewConversation() {
   messageAnswerText.clear();
   chatScrollInner.innerHTML = '';
   document.querySelectorAll('.followup-section').forEach(el => el.remove());
+  closeStory();
+  messageStories.clear();
   closeArticleSidebar();
   closeAnatomyPanel();
+  if (anatomyViewer?.activeScene) setAnatomyScene(null);
   anatomyRegionPill.hidden = true;
   anatomyInfoPanel.innerHTML = `<div class="anatomy-info-empty">${svg(ICON.cube)}Hover or click a body region to select it</div>`;
   renderHero();
@@ -811,6 +981,10 @@ anatomyLayerBar?.querySelectorAll('.layer-btn').forEach(btn => {
   btn.addEventListener('click', () => setAnatomyLayer(btn.dataset.layer));
 });
 
+anatomySceneBar?.querySelectorAll('.scene-btn').forEach(btn => {
+  btn.addEventListener('click', () => setAnatomyScene(btn.dataset.scene || null));
+});
+
 // ── Anatomy structure search ─────────────────────────────────────────────
 const anatomySearchInput = document.getElementById('anatomy-search-input');
 const anatomySearchResults = document.getElementById('anatomy-search-results');
@@ -844,9 +1018,11 @@ anatomySearchResults?.addEventListener('click', e => {
   const item = e.target.closest('.anatomy-search-item');
   if (!item || !anatomyViewer) return;
   anatomyViewer.selectStructure(item.dataset.structureId).then(() => {
-    // Sync the layer bar with the layer selectStructure may have switched to.
+    // Sync scene + layer bars: selectStructure may have exited a deep-dive
+    // scene (body structure) or stayed inside one (scene structure).
+    syncSceneBar(anatomyViewer?.activeScene || '');
     const active = anatomyViewer?.activeLayer;
-    if (active) {
+    if (active && !anatomyViewer?.activeScene) {
       anatomyLayerBar?.querySelectorAll('.layer-btn').forEach(b =>
         b.classList.toggle('active', b.dataset.layer === active));
     }
@@ -895,6 +1071,9 @@ chatContainer.addEventListener('click', e => {
       break;
     case 'open-anatomy':
       openAnatomyPanel();
+      break;
+    case 'open-story':
+      openStory(el.dataset.msgId);
       break;
     default:
       break;

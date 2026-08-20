@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     max_tldr_chars: int = 400
     max_summary_chars: int = 1500
 
+    # --- Visual story (grounded 3D walkthrough) ---
+    visual_story_enabled: bool = True
+
     # --- Result caches (in-process TTL+LRU) ---
     evidence_cache_entries: int = 256
     evidence_cache_ttl_seconds: float = 3600.0

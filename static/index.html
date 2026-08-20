@@ -115,6 +115,14 @@
 
     <div class="anatomy-breadcrumb" id="anatomy-breadcrumb" hidden></div>
 
+    <div class="anatomy-scene-bar" id="anatomy-scene-bar">
+      <button type="button" class="scene-btn active" data-scene="">Whole body</button>
+      <button type="button" class="scene-btn" data-scene="heart">Heart</button>
+      <button type="button" class="scene-btn" data-scene="eyes">Eyes</button>
+      <button type="button" class="scene-btn" data-scene="teeth">Teeth</button>
+      <button type="button" class="scene-btn" data-scene="brain">Brain</button>
+    </div>
+
     <div class="anatomy-layer-bar">
       <button type="button" class="layer-btn active" data-layer="skin">Skin</button>
       <button type="button" class="layer-btn" data-layer="muscles">Muscles</button>
@@ -148,6 +156,33 @@
         <svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01"/><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
         <div class="anatomy-fallback-title">3D viewer unavailable</div>
         <div class="anatomy-fallback-text">Your browser or device doesn't support WebGL, so the interactive body map can't be shown. You can still describe the affected area in words.</div>
+      </div>
+    </div>
+
+    <!-- Visual story player (guided 3D walkthrough of an answer) -->
+    <div class="story-player" id="story-player" hidden>
+      <div class="story-header">
+        <div class="story-title-wrap">
+          <span class="story-kicker">Visual story</span>
+          <span class="story-title" id="story-title"></span>
+        </div>
+        <button type="button" class="panel-close" id="story-close" aria-label="Close visual story">
+          <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="story-step-title" id="story-step-title"></div>
+      <div class="story-step-text" id="story-step-text"></div>
+      <div class="story-step-citations" id="story-step-citations"></div>
+      <div class="story-nav">
+        <button type="button" class="story-nav-btn" id="story-prev" aria-label="Previous step">
+          <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+          Back
+        </button>
+        <div class="story-dots" id="story-dots"></div>
+        <button type="button" class="story-nav-btn primary" id="story-next" aria-label="Next step">
+          Next
+          <svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
       </div>
     </div>
 
