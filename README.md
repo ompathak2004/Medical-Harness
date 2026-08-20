@@ -1,0 +1,64 @@
+# MediSearch Agent
+
+Evidence-based medical QA agent for patients. Ask a health question and get a
+cited, safety-reviewed answer grounded in peer-reviewed literature — with
+clinical risk calculators and an interactive 3D anatomy viewer.
+
+> Informational only — not a substitute for professional medical advice.
+
+## Features
+
+- **Evidence-first answers** — every claim cites peer-reviewed articles
+  retrieved via [MediSearch](https://medisearch.io); a safety-review pass
+  rejects unsupported or unsafe content.
+- **Emergency triage** — red-flag presentations (heart attack, stroke,
+  anaphylaxis, …) short-circuit to an immediate "call emergency services"
+  response with while-you-wait guidance.
+- **Clinical calculators** — Wells (DVT), CHA₂DS₂-VASc, Framingham, MRC
+  grade, BMI — deterministic Python, selected and populated by the LLM.
+- **Interactive 3D anatomy** — a three.js body model auto-highlights the
+  region under discussion; patients tap sub-parts to describe exactly where
+  it hurts.
+- **Fast** — Cerebras `gpt-oss-120b` (~3,000 tok/s) + parallelized pipeline
+  stages + token-streamed answers over SSE.
+
+## Quick start
+
+```bash
+cp .env.example .env      # fill in CEREBRAS_API_KEY and MEDISEARCH_API_KEY
+uv sync
+uv run medisearch-agent   # serves http://localhost:8080
+```
+
+## Tests
+
+```bash
+uv run pytest
+```
+
+## HealthBench evaluation
+
+```bash
+uv run python eval_healthbench.py --limit 5
+```
+
+## Docker
+
+```bash
+docker build -t medisearch-agent .
+docker run -p 8080:8080 --env-file .env medisearch-agent
+```
+
+## Deploy (DigitalOcean App Platform)
+
+```bash
+doctl registry login
+docker tag medisearch-agent registry.digitalocean.com/<registry>/medisearch-agent:latest
+docker push registry.digitalocean.com/<registry>/medisearch-agent:latest
+doctl apps create --spec deploy/app-spec.yaml   # set secret env values in the DO console
+```
+
+## Architecture
+
+See [docs/BLUEPRINT.md](docs/BLUEPRINT.md) for the full design blueprint
+(pipeline, safety architecture, SSE contract, latency design, deployment).
