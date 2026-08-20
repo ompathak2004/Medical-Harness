@@ -1,0 +1,14 @@
+.git
+.venv
+.uv
+__pycache__
+*.pyc
+.env
+.env.*
+!.env.example
+healtbench/
+tests/
+logs/
+*.md
+.dockerignore
+Dockerfile

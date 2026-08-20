@@ -7,8 +7,9 @@ discussed, then returns the region ID and relevant sub-parts so the
 frontend can highlight the correct area on the body map.
 """
 
-import json
 import logging
+
+from app.json_utils import parse_json_response
 
 logger = logging.getLogger(__name__)
 
@@ -270,13 +271,13 @@ Rules:
 - The location_question should help pinpoint the EXACT spot within the body region (e.g., "Is the pain in the inner or outer part of your calf?")."""
 
 
-def detect_anatomy_context(conv_text: str, gemini_client) -> dict | None:
+async def detect_anatomy_context(conv_text: str, llm_client) -> dict | None:
     """
     Analyze conversation to detect if an anatomical body region is being discussed.
 
     Args:
         conv_text: Formatted conversation text.
-        gemini_client: GeminiClient instance for LLM calls.
+        llm_client: LLM client with an async ``generate(prompt) -> str`` method.
 
     Returns:
         dict with anatomy context, or None if no anatomy detected.
@@ -299,16 +300,8 @@ def detect_anatomy_context(conv_text: str, gemini_client) -> dict | None:
     )
 
     try:
-        raw = gemini_client.generate(prompt)
-        # Parse JSON response
-        cleaned = raw.strip()
-        if cleaned.startswith("```"):
-            first_newline = cleaned.index("\n")
-            cleaned = cleaned[first_newline + 1:]
-            if cleaned.endswith("```"):
-                cleaned = cleaned[:-3]
-            cleaned = cleaned.strip()
-        result = json.loads(cleaned)
+        raw = await llm_client.generate(prompt)
+        result = parse_json_response(raw)
 
         if not result.get("has_anatomy"):
             logger.info("No anatomy context detected")
@@ -343,7 +336,11 @@ def detect_anatomy_context(conv_text: str, gemini_client) -> dict | None:
             "primary_region": primary,
             "location_question": result.get("location_question"),
         }
-        logger.info("Anatomy context detected: %s", anatomy_context)
+        logger.info(
+            "Anatomy context detected: primary=%s regions=%d",
+            result.get("primary_region"),
+            len(regions),
+        )
         return anatomy_context
 
     except Exception:

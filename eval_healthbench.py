@@ -20,12 +20,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from agent import AgentPipeline
-from evidence_retriever import EvidenceRetriever
-from llm_client import GeminiClient
-from logger import setup_logging
+import asyncio
 
-setup_logging()
+from app.config import get_settings
+from app.evidence import EvidenceRetriever
+from app.llm import CerebrasClient
+from app.logging_conf import setup_logging
+from app.pipeline import AgentPipeline
+
+setup_logging("INFO")
 logger = logging.getLogger(__name__)
 
 GRADING_PROMPT = """You are a medical answer grader. You will be given:
@@ -83,7 +86,7 @@ def get_conversation(prompt: list[dict]) -> list[str]:
     return messages
 
 
-def grade_rubric(gemini: GeminiClient, question: str, answer: str, rubric: dict) -> dict:
+def grade_rubric(llm: CerebrasClient, question: str, answer: str, rubric: dict) -> dict:
     """Grade a single rubric criterion using Gemini."""
     prompt = GRADING_PROMPT.format(
         question=question,
@@ -92,7 +95,7 @@ def grade_rubric(gemini: GeminiClient, question: str, answer: str, rubric: dict)
         points=rubric["points"],
     )
     try:
-        raw = gemini.generate(prompt)
+        raw = asyncio.run(llm.generate(prompt))
         cleaned = raw.strip()
         if cleaned.startswith("```"):
             first_nl = cleaned.index("\n")
@@ -123,7 +126,7 @@ def grade_rubric(gemini: GeminiClient, question: str, answer: str, rubric: dict)
 
 def evaluate_example(
     pipeline: AgentPipeline,
-    gemini: GeminiClient,
+    llm: CerebrasClient,
     example: dict,
     example_idx: int,
 ) -> dict:
@@ -140,10 +143,10 @@ def evaluate_example(
 
     # Run our agent pipeline
     start = time.time()
-    result = pipeline.run(
+    result = asyncio.run(pipeline.run(
         conversation=conversation,
         conversation_id=conversation_id,
-    )
+    ))
     elapsed = time.time() - start
 
     # If pipeline returned follow-up questions, we need to handle that.
@@ -162,7 +165,7 @@ def evaluate_example(
     max_possible = sum(r["points"] for r in rubrics if r["points"] > 0)
     graded = []
     for rubric in rubrics:
-        g = grade_rubric(gemini, question, answer, rubric)
+        g = grade_rubric(llm, question, answer, rubric)
         graded.append(g)
 
     earned = sum(g["earned"] for g in graded)
@@ -200,12 +203,14 @@ def main():
     args = parser.parse_args()
 
     # Initialize components
-    gemini = GeminiClient(
-        api_key=os.environ["GEMINI_API_KEY"],
-        model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+    settings = get_settings()
+    llm = CerebrasClient(
+        api_key=settings.cerebras_api_key,
+        model=settings.cerebras_model,
+        base_url=settings.cerebras_base_url,
     )
-    evidence = EvidenceRetriever(api_key=os.environ["MEDISEARCH_API_KEY"])
-    pipeline = AgentPipeline(gemini=gemini, evidence=evidence)
+    evidence = EvidenceRetriever(api_key=settings.medisearch_api_key)
+    pipeline = AgentPipeline(llm=llm, evidence=evidence)
 
     # Load benchmark
     examples = load_benchmark(args.file, limit=args.limit)
@@ -215,7 +220,7 @@ def main():
     results = []
     for i, example in enumerate(examples):
         try:
-            r = evaluate_example(pipeline, gemini, example, i)
+            r = evaluate_example(pipeline, llm, example, i)
             results.append(r)
         except Exception:
             logger.exception("Failed on example %d", i)
@@ -249,7 +254,7 @@ def main():
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(
             {
-                "model": os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+                "model": settings.cerebras_model,
                 "examples_evaluated": len(results),
                 "total_examples": len(examples),
                 "total_earned": total_earned,
