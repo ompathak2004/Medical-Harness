@@ -2,10 +2,17 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="description" content="MediSearch Agent — evidence-based medical Q&A with cited sources, clinical calculators, and an interactive 3D body map.">
   <title>MediSearch Agent — Evidence-Based Medical QA</title>
+
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%230891b2'/%3E%3Cpath d='M22 12h-4l-3 9L9 3l-3 9H2' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
   <script type="importmap">
   {
     "imports": {
@@ -14,311 +21,15 @@
     }
   }
   </script>
-  <style>
-    :root {
-      --bg-primary:    #0a0a0a;
-      --bg-secondary:  #111111;
-      --bg-tertiary:   #1a1a1a;
-      --bg-card:       #161616;
-      --bg-hover:      #1e1e1e;
-      --bg-input:      #141414;
-      --border-primary:  #2a2a2a;
-      --border-secondary:#222222;
-      --border-accent:   #333333;
-      --text-primary:   #e8e8e8;
-      --text-secondary: #a0a0a0;
-      --text-tertiary:  #666666;
-      --text-muted:     #555555;
-      --accent:         #ffffff;
-      --accent-dim:     rgba(255,255,255,0.07);
-      --accent-hover:   rgba(255,255,255,0.12);
-      --blue:           #38BDF8;
-      --blue-dim:       rgba(56,189,248,0.10);
-      --blue-hover:     rgba(56,189,248,0.20);
-      --blue-border:    rgba(56,189,248,0.30);
-      --success:        #4ade80;
-      --radius-sm:  5px;
-      --radius-md:  9px;
-      --radius-lg: 13px;
-      --radius-xl: 18px;
-      --shadow-md: 0 4px 12px rgba(0,0,0,.5);
-      --shadow-lg: 0 8px 30px rgba(0,0,0,.6);
-      --transition: .18s cubic-bezier(.4,0,.2,1);
-    }
 
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-
-    body {
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-      background: var(--bg-primary);
-      color: var(--text-primary);
-      height: 100vh;
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-      -webkit-font-smoothing: antialiased;
-    }
-
-    /* ── Header ── */
-    header {
-      background: var(--bg-secondary);
-      border-bottom: 1px solid var(--border-primary);
-      padding: 11px 22px;
-      display: flex;
-      align-items: center;
-      gap: 13px;
-      z-index: 100;
-      flex-shrink: 0;
-    }
-    .header-logo {
-      width: 32px; height: 32px; border-radius: 8px;
-      background: var(--bg-tertiary); border: 1px solid var(--border-primary);
-      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-    }
-    .header-logo svg { width: 17px; height: 17px; stroke: var(--text-secondary); fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-    .header-text h1 { font-size: .92rem; font-weight: 600; letter-spacing: -.01em; }
-    .header-text .subtitle { font-size: .70rem; color: var(--text-tertiary); margin-top: 1px; }
-    .header-status { margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: .70rem; color: var(--text-tertiary); }
-    .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); animation: pulse-dot 2s ease-in-out infinite; }
-    @keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:.4} }
-
-    /* ── Main layout ── */
-    .main-layout { flex: 1; display: flex; overflow: hidden; }
-
-    /* ── Chat area ── */
-    .chat-area { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-    #chat-container {
-      flex: 1; overflow-y: auto; padding: 22px 18px;
-      display: flex; flex-direction: column; gap: 8px; scroll-behavior: smooth;
-    }
-    #chat-container::-webkit-scrollbar { width: 4px; }
-    #chat-container::-webkit-scrollbar-thumb { background: var(--border-accent); border-radius: 4px; }
-
-    /* ── Messages ── */
-    .msg-wrapper { max-width: 720px; width: 100%; margin: 0 auto; display: flex; gap: 11px; animation: msg-in .28s ease-out; }
-    @keyframes msg-in { from{opacity:0;transform:translateY(7px)} to{opacity:1;transform:translateY(0)} }
-    .msg-wrapper.user    { justify-content: flex-end; }
-    .msg-wrapper.assistant { justify-content: flex-start; }
-    .msg-avatar { width: 27px; height: 27px; border-radius: 8px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 2px; border: 1px solid var(--border-primary); }
-    .msg-avatar.assistant-avatar { background: var(--bg-tertiary); }
-    .msg-avatar.user-avatar      { background: var(--accent-dim); }
-    .msg-avatar svg { width: 13px; height: 13px; stroke: var(--text-secondary); fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-    .msg { padding: 13px 16px; border-radius: var(--radius-lg); line-height: 1.65; font-size: .86rem; word-wrap: break-word; max-width: 85%; }
-    .msg.user { background: var(--bg-tertiary); border: 1px solid var(--border-primary); border-bottom-right-radius: var(--radius-sm); }
-    .msg.assistant { background: transparent; padding-left: 0; padding-right: 0; max-width: 100%; }
-    .msg.assistant p  { margin: 4px 0; color: var(--text-secondary); }
-    .msg.assistant h3 { margin: 15px 0 7px; font-size: .86rem; font-weight: 600; }
-    .msg.assistant ul, .msg.assistant ol { margin: 5px 0 5px 18px; color: var(--text-secondary); }
-    .msg.assistant li  { margin: 3px 0; }
-    .msg.assistant strong { color: var(--text-primary); font-weight: 500; }
-    .msg.system { max-width: 720px; width: 100%; margin: 0 auto; text-align: center; font-size: .80rem; color: var(--text-tertiary); padding: 38px 20px; line-height: 1.6; }
-    .system-icon { width: 46px; height: 46px; border-radius: 13px; background: var(--bg-tertiary); border: 1px solid var(--border-primary); display: flex; align-items: center; justify-content: center; margin: 0 auto 14px; }
-    .system-icon svg { width: 21px; height: 21px; stroke: var(--text-muted); fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-    .system-title { font-size: .96rem; font-weight: 600; color: var(--text-primary); margin-bottom: 6px; }
-
-    /* ── Citation refs ── */
-    .citation-ref { display: inline-flex; align-items: center; justify-content: center; background: rgba(255,255,255,.06); border: 1px solid var(--border-primary); color: #c0c0c0; font-size: .68rem; font-weight: 500; min-width: 19px; height: 19px; padding: 0 5px; border-radius: 4px; cursor: pointer; transition: all var(--transition); vertical-align: middle; margin: 0 1px; }
-    .citation-ref:hover { background: rgba(255,255,255,.14); color: var(--text-primary); transform: translateY(-1px); }
-
-    /* ── Tooltip ── */
-    .citation-tooltip { position: fixed; z-index: 1000; background: var(--bg-card); border: 1px solid var(--border-accent); border-radius: var(--radius-md); padding: 13px 15px; max-width: 330px; width: max-content; box-shadow: var(--shadow-lg); pointer-events: none; opacity: 0; transition: opacity .14s ease; }
-    .citation-tooltip.visible { opacity: 1; }
-    .citation-tooltip .tt-title { font-size: .80rem; font-weight: 500; margin-bottom: 5px; }
-    .citation-tooltip .tt-meta  { font-size: .70rem; color: var(--text-tertiary); margin-bottom: 5px; }
-    .citation-tooltip .tt-tldr  { font-size: .73rem; color: var(--text-secondary); line-height: 1.5; font-style: italic; }
-
-    /* ── Tool badges ── */
-    .tool-badge { display: inline-flex; flex-direction: column; gap: 4px; background: rgba(255,255,255,.04); border: 1px solid var(--border-primary); border-radius: var(--radius-md); padding: 11px 15px; margin: 6px 0; font-size: .80rem; color: var(--text-secondary); }
-    .tool-badge strong { color: var(--text-primary); font-weight: 500; }
-    .tool-badge .tool-score { font-size: 1.1rem; font-weight: 600; color: var(--text-primary); }
-
-    /* ── Sources ── */
-    .sources-section { margin-top: 15px; padding-top: 13px; border-top: 1px solid var(--border-secondary); }
-    .sources-label { font-size: .73rem; font-weight: 500; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 9px; }
-    .sources-grid { display: flex; flex-wrap: wrap; gap: 6px; }
-    .source-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--accent-dim); border: 1px solid var(--border-primary); border-radius: var(--radius-sm); padding: 5px 9px; font-size: .73rem; color: var(--text-secondary); cursor: pointer; transition: all var(--transition); max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .source-chip:hover { background: var(--accent-hover); color: var(--text-primary); }
-    .source-chip .source-num { font-weight: 600; color: var(--text-tertiary); font-size: .66rem; flex-shrink: 0; }
-
-    /* ── Follow-up chips ── */
-    .followup-section { max-width: 720px; width: 100%; margin: 0 auto; padding: 4px 0; }
-    .followup-chips { display: flex; flex-wrap: wrap; gap: 7px; }
-    .chip { background: var(--accent-dim); border: 1px solid var(--border-primary); border-radius: 20px; padding: 7px 15px; font-size: .76rem; color: var(--text-secondary); cursor: pointer; transition: all var(--transition); font-family: inherit; }
-    .chip:hover { background: var(--accent-hover); border-color: var(--border-accent); color: var(--text-primary); }
-
-    /* ── Input area ── */
-    .input-area-wrapper { border-top: 1px solid var(--border-secondary); background: var(--bg-secondary); padding: 14px 18px; flex-shrink: 0; }
-    #input-area { max-width: 720px; width: 100%; margin: 0 auto; display: flex; align-items: flex-end; gap: 9px; background: var(--bg-input); border: 1px solid var(--border-primary); border-radius: var(--radius-lg); padding: 5px 5px 5px 14px; transition: border-color var(--transition); }
-    #input-area:focus-within { border-color: var(--border-accent); }
-    #input-area textarea { flex: 1; border: none; background: transparent; color: var(--text-primary); font-size: .86rem; font-family: inherit; resize: none; min-height: 34px; max-height: 116px; padding: 7px 0; line-height: 1.5; }
-    #input-area textarea::placeholder { color: var(--text-muted); }
-    #input-area textarea:focus { outline: none; }
-    #input-area button { width: 34px; height: 34px; border-radius: var(--radius-sm); background: var(--accent-dim); border: 1px solid var(--border-primary); color: var(--text-secondary); cursor: pointer; transition: all var(--transition); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-    #input-area button:hover { background: var(--accent-hover); color: var(--text-primary); }
-    #input-area button:disabled { opacity: .3; cursor: not-allowed; }
-    #input-area button svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-    .disclaimer { max-width: 720px; margin: 0 auto; text-align: center; font-size: .66rem; color: var(--text-muted); padding: 7px 0 3px; }
-
-    /* ── Loading ── */
-    .loading-indicator { display: flex; align-items: center; gap: 5px; padding: 7px 0; }
-    .loading-indicator .dot { width: 4px; height: 4px; border-radius: 50%; background: var(--text-muted); animation: bounce-dot 1s ease-in-out infinite; }
-    .loading-indicator .dot:nth-child(2) { animation-delay: .15s; }
-    .loading-indicator .dot:nth-child(3) { animation-delay: .3s; }
-    @keyframes bounce-dot { 0%,100%{opacity:.3;transform:translateY(0)} 50%{opacity:1;transform:translateY(-3px)} }
-
-    /* ── Step indicator ── */
-    .step-indicator { display: flex; flex-direction: column; gap: 6px; }
-    .step-item { display: flex; align-items: center; gap: 7px; font-size: .76rem; color: var(--text-tertiary); transition: color .2s; }
-    .step-item.active { color: var(--text-secondary); }
-    .step-spinner { width: 11px; height: 11px; border: 2px solid var(--border-accent); border-top-color: var(--text-secondary); border-radius: 50%; animation: spin .8s linear infinite; flex-shrink: 0; }
-    @keyframes spin { to{transform:rotate(360deg)} }
-    .step-check { color: var(--success); font-size: .70rem; }
-
-    /* ── Article sidebar ── */
-    .article-sidebar { width: 0; overflow: hidden; background: var(--bg-secondary); border-left: 1px solid var(--border-primary); transition: width .3s cubic-bezier(.4,0,.2,1); flex-shrink: 0; display: flex; flex-direction: column; }
-    .article-sidebar.open { width: 400px; }
-    .sidebar-header { display: flex; align-items: center; justify-content: space-between; padding: 13px 16px; border-bottom: 1px solid var(--border-primary); flex-shrink: 0; }
-    .sidebar-title { font-size: .74rem; font-weight: 500; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: .05em; }
-    .sidebar-close { width: 26px; height: 26px; border-radius: var(--radius-sm); background: transparent; border: 1px solid transparent; color: var(--text-tertiary); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all var(--transition); }
-    .sidebar-close:hover { background: var(--accent-dim); border-color: var(--border-primary); color: var(--text-primary); }
-    .sidebar-close svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-    .sidebar-content { flex: 1; overflow-y: auto; padding: 18px 16px; }
-    .sidebar-content::-webkit-scrollbar { width: 3px; }
-    .sidebar-content::-webkit-scrollbar-thumb { background: var(--border-accent); border-radius: 3px; }
-    .sidebar-article-title { font-size: .95rem; font-weight: 600; line-height: 1.5; margin-bottom: 12px; }
-    .sidebar-meta-row { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 14px; }
-    .sidebar-meta-tag { font-size: .68rem; padding: 3px 7px; background: var(--accent-dim); border: 1px solid var(--border-primary); border-radius: 4px; color: var(--text-tertiary); }
-    .sidebar-section { margin-bottom: 16px; }
-    .sidebar-section-label { font-size: .70rem; font-weight: 500; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 7px; }
-    .sidebar-section-content { font-size: .82rem; line-height: 1.6; color: var(--text-secondary); }
-    .sidebar-authors { font-size: .76rem; color: var(--text-tertiary); line-height: 1.5; }
-    .sidebar-link { display: inline-flex; align-items: center; gap: 6px; margin-top: 14px; padding: 9px 14px; background: var(--accent-dim); border: 1px solid var(--border-primary); border-radius: var(--radius-md); color: var(--text-primary); text-decoration: none; font-size: .80rem; font-weight: 500; transition: all var(--transition); }
-    .sidebar-link:hover { background: var(--accent-hover); }
-    .sidebar-link svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-
-    /* ─────────────────────────────────────────────────────────────────────────
-       ANATOMY SIDEBAR  — fully redesigned
-    ───────────────────────────────────────────────────────────────────────── */
-    .anatomy-sidebar {
-      width: 0; overflow: hidden;
-      background: var(--bg-secondary);
-      border-left: 1px solid var(--border-primary);
-      transition: width .3s cubic-bezier(.4,0,.2,1);
-      flex-shrink: 0;
-      display: flex; flex-direction: column;
-    }
-    .anatomy-sidebar.open { width: 460px; }
-
-    /* Top bar: title + close */
-    .anatomy-topbar {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 12px 16px;
-      border-bottom: 1px solid var(--border-primary);
-      flex-shrink: 0;
-    }
-    .anatomy-topbar .sidebar-title { font-size: .74rem; font-weight: 500; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: .05em; }
-
-    /* Layer tabs */
-    .anatomy-layer-bar {
-      display: flex; gap: 4px; padding: 10px 14px;
-      border-bottom: 1px solid var(--border-primary);
-      flex-shrink: 0;
-    }
-    .layer-btn {
-      flex: 1; padding: 7px 6px; border-radius: var(--radius-sm);
-      border: 1px solid var(--border-primary);
-      background: var(--accent-dim); color: var(--text-tertiary);
-      font-size: .71rem; font-weight: 500; font-family: inherit;
-      cursor: pointer; transition: all var(--transition); text-align: center;
-    }
-    .layer-btn:hover { background: var(--accent-hover); color: var(--text-secondary); border-color: var(--border-accent); }
-    .layer-btn.active { background: var(--blue-dim); border-color: var(--blue-border); color: var(--blue); }
-
-    /* View controls */
-    .anatomy-view-bar {
-      display: flex; align-items: center; gap: 4px; padding: 8px 14px;
-      border-bottom: 1px solid var(--border-primary);
-      flex-shrink: 0;
-    }
-    .anatomy-view-bar .view-label { font-size: .68rem; color: var(--text-muted); margin-right: 4px; }
-    .view-btn {
-      padding: 5px 9px; border-radius: var(--radius-sm);
-      border: 1px solid var(--border-primary); background: var(--accent-dim);
-      color: var(--text-tertiary); font-size: .68rem; font-family: inherit;
-      cursor: pointer; transition: all var(--transition);
-    }
-    .view-btn:hover { background: var(--accent-hover); color: var(--text-secondary); border-color: var(--border-accent); }
-    .view-btn.reset { margin-left: auto; color: var(--text-muted); }
-
-    /* Canvas */
-    .anatomy-canvas-wrap { flex: 1; min-height: 0; position: relative; overflow: hidden; }
-    .anatomy-canvas-wrap canvas { display: block; width: 100% !important; height: 100% !important; }
-
-    /* Hover label floating on the canvas */
-    .anatomy-hover-label {
-      position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
-      background: rgba(0,0,0,.75); border: 1px solid var(--border-accent);
-      border-radius: var(--radius-sm); padding: 5px 13px; font-size: .73rem;
-      color: var(--text-primary); pointer-events: none; white-space: nowrap;
-      opacity: 0; transition: opacity .14s ease;
-    }
-    .anatomy-hover-label.visible { opacity: 1; }
-
-    /* Region info panel (bottom) */
-    .anatomy-info {
-      flex-shrink: 0;
-      border-top: 1px solid var(--border-primary);
-      padding: 12px 14px;
-      max-height: 210px; overflow-y: auto;
-      background: var(--bg-tertiary);
-    }
-    .anatomy-info::-webkit-scrollbar { width: 3px; }
-    .anatomy-info::-webkit-scrollbar-thumb { background: var(--border-accent); border-radius: 3px; }
-    .anatomy-info-empty { font-size: .78rem; color: var(--text-muted); text-align: center; padding: 8px 0; }
-    .anatomy-region-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-    .anatomy-region-name { font-size: .88rem; font-weight: 600; color: var(--text-primary); }
-    .anatomy-region-badge { font-size: .68rem; padding: 3px 8px; background: var(--blue-dim); border: 1px solid var(--blue-border); border-radius: 10px; color: var(--blue); }
-    .anatomy-subparts { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
-    .anatomy-subpart {
-      padding: 5px 12px; border-radius: 14px;
-      background: var(--accent-dim); border: 1px solid var(--border-primary);
-      color: var(--text-secondary); font-size: .73rem; font-family: inherit; cursor: pointer;
-      transition: all var(--transition);
-    }
-    .anatomy-subpart:hover { background: var(--blue-dim); border-color: var(--blue-border); color: var(--blue); }
-    .anatomy-confirm-btn {
-      margin-top: 10px;
-      width: 100%; padding: 9px 0;
-      border-radius: var(--radius-md);
-      background: var(--blue-dim); border: 1px solid var(--blue-border);
-      color: var(--blue); font-size: .80rem; font-weight: 500; font-family: inherit;
-      cursor: pointer; transition: all var(--transition);
-    }
-    .anatomy-confirm-btn:hover { background: var(--blue-hover); }
-
-    /* Toggle button in chat */
-    .anatomy-toggle-btn {
-      display: inline-flex; align-items: center; gap: 6px;
-      background: var(--blue-dim); border: 1px solid var(--blue-border);
-      border-radius: var(--radius-md); padding: 7px 13px;
-      font-size: .76rem; color: var(--blue); cursor: pointer;
-      transition: all var(--transition); font-family: inherit; margin: 7px 0;
-    }
-    .anatomy-toggle-btn:hover { background: var(--blue-hover); }
-    .anatomy-toggle-btn svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.5; }
-
-    /* preliminary info in follow_up */
-    .preliminary-info { margin-bottom: 12px; padding-bottom: 11px; border-bottom: 1px solid var(--border-secondary); color: var(--text-secondary); }
-
-    @media (max-width: 768px) {
-      .article-sidebar.open,
-      .anatomy-sidebar.open { width: 100%; position: absolute; inset: 0; z-index: 200; }
-    }
-  </style>
+  <link rel="stylesheet" href="/static/css/theme.css">
+  <link rel="stylesheet" href="/static/css/layout.css">
+  <link rel="stylesheet" href="/static/css/components.css">
+  <link rel="stylesheet" href="/static/css/anatomy.css">
 </head>
 <body>
 
-<header>
+<header class="app-header">
   <div class="header-logo">
     <svg viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
   </div>
@@ -326,431 +37,122 @@
     <h1>MediSearch Agent</h1>
     <div class="subtitle">Evidence-based Medical QA</div>
   </div>
-  <div class="header-status"><span class="status-dot"></span> Online</div>
+
+  <div class="header-status">
+    <button type="button" class="new-convo-btn" id="new-convo-btn" title="Start a new conversation">
+      <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 2.64-6.36"/><polyline points="3 4 3 12 11 12"/></svg>
+      New conversation
+    </button>
+    <button type="button" class="icon-btn" id="anatomy-header-btn" title="Open 3D body map" aria-label="Open 3D body map">
+      <svg viewBox="0 0 24 24"><path d="M12 2a3 3 0 0 0-3 3v1H7a1 1 0 0 0-1 1v3a4 4 0 0 0 1 2.65V20a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-7.35A4 4 0 0 0 18 10V7a1 1 0 0 0-1-1h-2V5a3 3 0 0 0-3-3z"/></svg>
+    </button>
+    <button type="button" class="icon-btn theme-toggle" id="theme-toggle-btn" title="Toggle light/dark theme" aria-label="Toggle light/dark theme">
+      <svg class="icon-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+    <span class="status-pill">
+      <span class="status-dot" id="status-dot"></span>
+      <span class="status-label" id="status-label">Online</span>
+    </span>
+  </div>
 </header>
 
 <div class="main-layout">
   <!-- Chat Area -->
   <div class="chat-area">
     <div id="chat-container">
-      <div class="msg system">
-        <div class="system-icon">
-          <svg viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-        </div>
-        <div class="system-title">Medical Research Assistant</div>
-        Ask any medical question. The agent will retrieve evidence from peer-reviewed sources,
-        apply validated clinical tools when relevant, and provide a cited answer.
-      </div>
+      <div class="chat-scroll-inner" id="chat-scroll-inner"></div>
     </div>
 
     <div class="input-area-wrapper">
-      <div id="input-area">
-        <textarea id="user-input" placeholder="Ask a medical question…" rows="1"></textarea>
-        <button id="send-btn" onclick="sendMessage()">
-          <svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-        </button>
+      <div class="input-inner">
+        <div id="input-area">
+          <textarea id="user-input" placeholder="Ask a medical question…" rows="1" aria-label="Ask a medical question"></textarea>
+          <button type="button" id="send-btn" aria-label="Send message">
+            <svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            <span class="btn-spinner" aria-hidden="true"></span>
+          </button>
+        </div>
+        <div class="input-meta-row">
+          <div class="disclaimer-footer">Informational only — not a substitute for professional medical advice.</div>
+          <div class="input-hint"><kbd>Enter</kbd> to send · <kbd>Shift+Enter</kbd> for new line</div>
+        </div>
       </div>
-      <div class="disclaimer">This tool provides information only — not a substitute for professional medical advice.</div>
     </div>
   </div>
 
-  <!-- Article Sidebar -->
-  <div class="article-sidebar" id="article-sidebar">
+  <!-- Article detail sidebar (slide-in) -->
+  <aside class="article-sidebar" id="article-sidebar" aria-hidden="true">
     <div class="sidebar-header">
       <span class="sidebar-title">Source Article</span>
-      <button class="sidebar-close" onclick="closeSidebar()">
+      <button type="button" class="panel-close" id="article-sidebar-close" aria-label="Close source panel">
         <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </div>
     <div class="sidebar-content" id="sidebar-content"></div>
-  </div>
+  </aside>
 
-  <!-- Anatomy Body Map Sidebar — improved UI -->
-  <div class="anatomy-sidebar" id="anatomy-sidebar">
+  <!-- Anatomy body map panel (right-hand drawer / mobile bottom-sheet) -->
+  <aside class="anatomy-panel" id="anatomy-panel" aria-hidden="true">
+    <div class="drawer-handle"></div>
 
-    <!-- Top bar -->
     <div class="anatomy-topbar">
-      <span class="sidebar-title">Body Map</span>
-      <button class="sidebar-close" onclick="closeAnatomySidebar()">
+      <div class="anatomy-topbar-title">
+        <svg viewBox="0 0 24 24"><path d="M12 2a3 3 0 0 0-3 3v1H7a1 1 0 0 0-1 1v3a4 4 0 0 0 1 2.65V20a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-7.35A4 4 0 0 0 18 10V7a1 1 0 0 0-1-1h-2V5a3 3 0 0 0-3-3z"/></svg>
+        <span class="sidebar-title">Body Map</span>
+        <span class="anatomy-region-pill" id="anatomy-region-pill" hidden></span>
+      </div>
+      <button type="button" class="panel-close" id="anatomy-panel-close" aria-label="Close body map">
         <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </div>
 
-    <!-- Layer switcher -->
     <div class="anatomy-layer-bar">
-      <button class="layer-btn active" data-layer="skin"     onclick="setLayer('skin')">Skin</button>
-      <button class="layer-btn"        data-layer="muscles"  onclick="setLayer('muscles')">Muscles</button>
-      <button class="layer-btn"        data-layer="skeleton" onclick="setLayer('skeleton')">Skeleton</button>
-      <button class="layer-btn"        data-layer="vascular" onclick="setLayer('vascular')">Vascular</button>
-      <button class="layer-btn"        data-layer="all"      onclick="setLayer('all')">All</button>
+      <button type="button" class="layer-btn active" data-layer="skin">Skin</button>
+      <button type="button" class="layer-btn" data-layer="muscles">Muscles</button>
+      <button type="button" class="layer-btn" data-layer="skeleton">Skeleton</button>
+      <button type="button" class="layer-btn" data-layer="vascular">Vascular</button>
+      <button type="button" class="layer-btn" data-layer="all">All</button>
     </div>
 
-    <!-- View controls -->
     <div class="anatomy-view-bar">
-      <span class="view-label">View:</span>
-      <button class="view-btn" onclick="setView('front')">Front</button>
-      <button class="view-btn" onclick="setView('back')">Back</button>
-      <button class="view-btn" onclick="setView('left')">Left</button>
-      <button class="view-btn" onclick="setView('right')">Right</button>
-      <button class="view-btn reset" onclick="resetView()">↺ Reset</button>
+      <span class="view-label">View</span>
+      <button type="button" class="view-btn" data-view="front">Front</button>
+      <button type="button" class="view-btn" data-view="back">Back</button>
+      <button type="button" class="view-btn" data-view="left">Left</button>
+      <button type="button" class="view-btn" data-view="right">Right</button>
+      <button type="button" class="view-btn reset" id="anatomy-reset-btn" aria-label="Reset camera">
+        <svg viewBox="0 0 24 24"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        Reset
+      </button>
     </div>
 
-    <!-- 3-D canvas -->
     <div class="anatomy-canvas-wrap" id="anatomy-canvas">
+      <div class="anatomy-canvas-hint">Drag to rotate · Scroll to zoom</div>
       <div class="anatomy-hover-label" id="anatomy-hover-label"></div>
+      <div class="anatomy-loading" id="anatomy-loading">
+        <span class="spin-ring"></span>
+        Loading 3D viewer…
+      </div>
+      <div class="anatomy-fallback" id="anatomy-fallback">
+        <svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01"/><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+        <div class="anatomy-fallback-title">3D viewer unavailable</div>
+        <div class="anatomy-fallback-text">Your browser or device doesn't support WebGL, so the interactive body map can't be shown. You can still describe the affected area in words.</div>
+      </div>
     </div>
 
-    <!-- Region info panel -->
     <div class="anatomy-info" id="anatomy-info-panel">
-      <div class="anatomy-info-empty">Hover or click a body region to select it</div>
+      <div class="anatomy-info-empty">
+        <svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+        Hover or click a body region to select it
+      </div>
     </div>
-
-  </div><!-- /anatomy-sidebar -->
+  </aside>
 </div><!-- /main-layout -->
 
+<div class="panel-backdrop" id="panel-backdrop"></div>
 <div class="citation-tooltip" id="citation-tooltip"></div>
 
-<script>
-  // ── State ──
-  let conversationId = null;
-  let conversation   = [];
-  let currentArticles = [];
-  let currentAnatomyContext = null;
-
-  const chatContainer  = document.getElementById('chat-container');
-  const userInput      = document.getElementById('user-input');
-  const sendBtn        = document.getElementById('send-btn');
-  const articleSidebar = document.getElementById('article-sidebar');
-  const sidebarContent = document.getElementById('sidebar-content');
-  const citationTooltip= document.getElementById('citation-tooltip');
-  const anatomySidebar = document.getElementById('anatomy-sidebar');
-  const anatomyHoverLbl= document.getElementById('anatomy-hover-label');
-  const anatomyInfoPanel = document.getElementById('anatomy-info-panel');
-
-  let anatomyViewer = null;
-  let _selectedRegionId = null;
-
-  // ── Auto-resize textarea ──
-  userInput.addEventListener('input', () => {
-    userInput.style.height = 'auto';
-    userInput.style.height = Math.min(userInput.scrollHeight, 116) + 'px';
-  });
-  userInput.addEventListener('keydown', e => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
-  });
-
-  // ── Layer / view controls (proxy to viewer) ──
-  function setLayer(layer) {
-    document.querySelectorAll('.layer-btn').forEach(b => b.classList.toggle('active', b.dataset.layer === layer));
-    if (anatomyViewer) anatomyViewer.setLayer(layer);
-  }
-  function setView(v)  { if (anatomyViewer) anatomyViewer.setView(v); }
-  function resetView() { if (anatomyViewer) anatomyViewer.resetCamera(); }
-
-  // ── Anatomy hover callback ──
-  function onAnatomyHover(data) {
-    if (data) {
-      anatomyHoverLbl.textContent = data.label || data.region;
-      anatomyHoverLbl.classList.add('visible');
-    } else {
-      anatomyHoverLbl.classList.remove('visible');
-    }
-  }
-
-  // ── Anatomy select callback ──
-  function onAnatomySelect(data) {
-    if (!data || !data.region) return;
-    _selectedRegionId = data.region;
-
-    // Sub-parts from anatomy context
-    const subParts = (currentAnatomyContext?.regions || []).find(r => r.id === data.region)?.sub_parts || [];
-
-    // Build info panel
-    let html = `<div class="anatomy-region-header">
-      <div class="anatomy-region-name">${escapeHtml(data.label || data.region)}</div>
-      <div class="anatomy-region-badge">${escapeHtml(data.layer || 'region')}</div>
-    </div>`;
-
-    if (subParts.length) {
-      html += '<div class="anatomy-subparts">';
-      subParts.forEach(sp => {
-        html += `<button class="anatomy-subpart" onclick="confirmSubpart('${escapeAttr(data.label || data.region)}','${escapeAttr(sp)}')">${escapeHtml(sp)}</button>`;
-      });
-      html += '</div>';
-    }
-
-    html += `<button class="anatomy-confirm-btn" onclick="confirmRegion()">
-      Use this region in my question →
-    </button>`;
-
-    anatomyInfoPanel.innerHTML = html;
-  }
-
-  function confirmRegion() {
-    if (!_selectedRegionId && anatomyInfoPanel.querySelector('.anatomy-region-name')) {
-      const label = anatomyInfoPanel.querySelector('.anatomy-region-name').textContent;
-      closeAnatomySidebar();
-      sendMessage(`The issue is in my ${label}.`);
-    } else if (_selectedRegionId) {
-      const label = (window.ANATOMY_REGIONS?.[_selectedRegionId]?.label) || _selectedRegionId;
-      closeAnatomySidebar();
-      sendMessage(`The issue is in my ${label}.`);
-    }
-  }
-
-  function confirmSubpart(regionLabel, subPart) {
-    closeAnatomySidebar();
-    sendMessage(`The issue is in my ${regionLabel}, specifically the ${subPart}.`);
-  }
-
-  // ── Open anatomy sidebar ──
-  function openAnatomySidebar() {
-    articleSidebar.classList.remove('open');
-    anatomySidebar.classList.add('open');
-
-    if (!anatomyViewer && window.AnatomyViewer) {
-      const container = document.getElementById('anatomy-canvas');
-      anatomyViewer = new window.AnatomyViewer(container);
-      anatomyViewer.onHover(onAnatomyHover);
-      anatomyViewer.onSelect(onAnatomySelect);
-    }
-
-    // Highlight regions from context
-    if (anatomyViewer && currentAnatomyContext?.regions) {
-      anatomyViewer.highlight(currentAnatomyContext.regions.map(r => r.id));
-      if (currentAnatomyContext.primary_region) {
-        anatomyViewer.focusRegion(currentAnatomyContext.primary_region.id);
-      }
-    }
-
-    setTimeout(() => { if (anatomyViewer) anatomyViewer.resize(); }, 350);
-  }
-
-  function closeAnatomySidebar() { anatomySidebar.classList.remove('open'); }
-
-  // ── Add message ──
-  function addMessage(html, cls) {
-    if (cls === 'system') {
-      const d = document.createElement('div');
-      d.className = 'msg system'; d.innerHTML = html;
-      chatContainer.appendChild(d); chatContainer.scrollTop = chatContainer.scrollHeight;
-      return d;
-    }
-    const wrap = document.createElement('div');
-    wrap.className = 'msg-wrapper ' + cls;
-    const avatar = `<div class="msg-avatar ${cls === 'assistant' ? 'assistant-avatar' : 'user-avatar'}">
-      <svg viewBox="0 0 24 24">${cls === 'assistant'
-        ? '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>'
-        : '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>'
-      }</svg></div>`;
-    wrap.innerHTML = cls === 'assistant'
-      ? `${avatar}<div class="msg ${cls}">${html}</div>`
-      : `<div class="msg ${cls}">${html}</div>${avatar}`;
-    chatContainer.appendChild(wrap); chatContainer.scrollTop = chatContainer.scrollHeight;
-    return wrap;
-  }
-
-  // ── Send message ──
-  async function sendMessage(text) {
-    const msg = text || userInput.value.trim();
-    if (!msg) return;
-    userInput.value = ''; userInput.style.height = 'auto';
-    document.querySelectorAll('.followup-section').forEach(el => el.remove());
-    addMessage(escapeHtml(msg), 'user');
-    conversation.push(msg);
-    sendBtn.disabled = true;
-
-    // Step indicator
-    const stepWrap = document.createElement('div');
-    stepWrap.className = 'msg-wrapper assistant';
-    stepWrap.innerHTML = `
-      <div class="msg-avatar assistant-avatar"><svg viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></div>
-      <div class="msg assistant"><div class="step-indicator"></div></div>`;
-    chatContainer.appendChild(stepWrap); chatContainer.scrollTop = chatContainer.scrollHeight;
-
-    try {
-      const resp = await fetch('/api/chat/stream', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ conversation, conversation_id: conversationId }),
-      });
-
-      if (!resp.ok) {
-        const err = await resp.json();
-        stepWrap.remove();
-        addMessage('Error: ' + (err.detail || resp.statusText), 'system');
-        conversation.pop(); sendBtn.disabled = false; return;
-      }
-
-      const reader = resp.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const parts = buffer.split('\n\n'); buffer = parts.pop();
-        for (const part of parts) {
-          if (!part.trim()) continue;
-          let eventType = '', eventData = '';
-          for (const line of part.split('\n')) {
-            if (line.startsWith('event: ')) eventType = line.slice(7);
-            else if (line.startsWith('data: ')) eventData = line.slice(6);
-          }
-          if (!eventType || !eventData) continue;
-          const data = JSON.parse(eventData);
-          if (eventType === 'meta')   { conversationId = data.conversation_id; }
-          else if (eventType === 'step') {
-            const ctr = stepWrap.querySelector('.step-indicator');
-            const prev = ctr.querySelector('.step-item.active');
-            if (prev) { prev.classList.replace('active','done'); prev.querySelector('.step-icon').innerHTML = '<span class="step-check">✓</span>'; }
-            const sd = document.createElement('div');
-            sd.className = 'step-item active';
-            sd.innerHTML = '<span class="step-icon"><span class="step-spinner"></span></span><span>' + escapeHtml(data.message) + '</span>';
-            ctr.appendChild(sd); chatContainer.scrollTop = chatContainer.scrollHeight;
-          }
-          else if (eventType === 'result') { stepWrap.remove(); handleResult(data); }
-          else if (eventType === 'error')  { stepWrap.remove(); addMessage('Error: ' + (data.detail || 'Unknown error'), 'system'); conversation.pop(); }
-        }
-      }
-    } catch (e) {
-      stepWrap.remove(); addMessage('Network error: ' + e.message, 'system'); conversation.pop();
-    }
-    sendBtn.disabled = false;
-  }
-
-  // ── Handle result ──
-  function handleResult(data) {
-    if (data.anatomy_context?.has_anatomy) currentAnatomyContext = data.anatomy_context;
-
-    if (data.type === 'follow_up') {
-      let html = '';
-      if (data.preliminary_info)
-        html += '<div class="preliminary-info">' + renderMarkdown(data.preliminary_info) + '</div>';
-      html += '<strong>To give you more specific advice, I need a few more details:</strong><ul>';
-      data.follow_up_questions.forEach(q => { html += '<li>' + escapeHtml(q) + '</li>'; });
-      html += '</ul>';
-      if (currentAnatomyContext)
-        html += `<button class="anatomy-toggle-btn" onclick="openAnatomySidebar()">
-          <svg viewBox="0 0 24 24"><path d="M12 2a3 3 0 0 0-3 3v1H7a1 1 0 0 0-1 1v3a4 4 0 0 0 1 2.65V20a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-7.35A4 4 0 0 0 18 10V7a1 1 0 0 0-1-1h-2V5a3 3 0 0 0-3-3z"/></svg>
-          Show on Body Map</button>`;
-      addMessage(html, 'assistant');
-      conversation.push(((data.preliminary_info||'') + ' ' + data.follow_up_questions.join(' ')).trim());
-      if (currentAnatomyContext) openAnatomySidebar();
-
-    } else {
-      currentArticles = data.articles || [];
-      let html = '';
-
-      // Tool results
-      if (data.tool_results?.length) {
-        data.tool_results.forEach(tr => {
-          html += '<div class="tool-badge"><strong>' + escapeHtml(tr.tool||'') + '</strong>';
-          if (tr.score   !== undefined) html += '<div class="tool-score">Score: ' + tr.score + '</div>';
-          if (tr.bmi     !== undefined) html += '<div class="tool-score">BMI: '   + tr.bmi   + '</div>';
-          if (tr.risk)        html += '<div>Risk: '           + escapeHtml(tr.risk)            + '</div>';
-          if (tr.category)    html += '<div>Category: '       + escapeHtml(tr.category)        + '</div>';
-          if (tr.recommendation) html += '<div>'              + escapeHtml(tr.recommendation)  + '</div>';
-          if (tr.ten_year_risk_percent !== undefined) html += '<div>10-year CVD risk: ' + tr.ten_year_risk_percent + '%</div>';
-          if (tr.grade !== undefined) html += '<div>Grade: ' + tr.grade + '/5 — ' + escapeHtml(tr.description||'') + '</div>';
-          html += '</div>';
-        });
-      }
-
-      html += '<div class="answer-body">' + renderAnswerWithCitations(data.answer||'', currentArticles) + '</div>';
-
-      if (currentArticles.length) {
-        html += '<div class="sources-section"><div class="sources-label">Sources</div><div class="sources-grid">';
-        currentArticles.forEach((art, i) => {
-          const t = (art.title||'Article').substring(0,50) + (art.title?.length>50?'…':'');
-          html += `<div class="source-chip" onclick="openArticleSidebar(${i})" onmouseenter="showCitationTooltip(event,${i})" onmouseleave="hideCitationTooltip()">
-            <span class="source-num">[${i+1}]</span><span class="source-title">${escapeHtml(t)}</span></div>`;
-        });
-        html += '</div></div>';
-      }
-
-      if (currentAnatomyContext)
-        html += `<button class="anatomy-toggle-btn" onclick="openAnatomySidebar()">
-          <svg viewBox="0 0 24 24"><path d="M12 2a3 3 0 0 0-3 3v1H7a1 1 0 0 0-1 1v3a4 4 0 0 0 1 2.65V20a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-7.35A4 4 0 0 0 18 10V7a1 1 0 0 0-1-1h-2V5a3 3 0 0 0-3-3z"/></svg>
-          View Body Map</button>`;
-
-      addMessage(html, 'assistant');
-      conversation.push(data.answer||'');
-
-      if (data.followups?.length) {
-        const sec = document.createElement('div');
-        sec.className = 'followup-section';
-        sec.innerHTML = '<div class="followup-chips">' +
-          data.followups.map(q => `<span class="chip" onclick="sendMessage('${escapeAttr(q)}')">${escapeHtml(q)}</span>`).join('') +
-          '</div>';
-        chatContainer.appendChild(sec); chatContainer.scrollTop = chatContainer.scrollHeight;
-      }
-    }
-  }
-
-  // ── Citation helpers ──
-  function renderAnswerWithCitations(text, articles) {
-    let html = renderMarkdown(text);
-    html = html.replace(/\[(\d+(?:\s*,\s*\d+)*)\](?!\()/g, (_, inner) => {
-      return inner.split(',').map(ns => {
-        const n = parseInt(ns.trim(), 10), idx = n - 1;
-        return idx >= 0 && idx < articles.length
-          ? `<span class="citation-ref" data-ai="${idx}" onclick="openArticleSidebar(${idx})" onmouseenter="showCitationTooltip(event,${idx})" onmouseleave="hideCitationTooltip()">${n}</span>`
-          : `<span class="citation-ref">${n}</span>`;
-      }).join(' ');
-    });
-    return html;
-  }
-
-  function showCitationTooltip(e, idx) {
-    if (idx < 0 || idx >= currentArticles.length) return;
-    const art = currentArticles[idx];
-    let html = `<div class="tt-title">${escapeHtml(art.title||'Article')}</div>`;
-    const meta = [art.year, art.journal].filter(Boolean);
-    if (meta.length) html += `<div class="tt-meta">${escapeHtml(meta.join(' · '))}</div>`;
-    if (art.tldr) html += `<div class="tt-tldr">${escapeHtml(art.tldr)}</div>`;
-    citationTooltip.innerHTML = html;
-    const r = e.target.getBoundingClientRect(), w = 330;
-    let left = r.left + r.width/2 - w/2;
-    if (left < 10) left = 10;
-    if (left + w > window.innerWidth - 10) left = window.innerWidth - w - 10;
-    citationTooltip.style.left = left + 'px';
-    citationTooltip.classList.add('visible');
-    const h = citationTooltip.offsetHeight;
-    citationTooltip.style.top = (r.top - h > 10 ? r.top - h : r.bottom + 7) + 'px';
-  }
-  function hideCitationTooltip() { citationTooltip.classList.remove('visible'); }
-
-  // ── Article sidebar ──
-  function openArticleSidebar(idx) {
-    if (idx < 0 || idx >= currentArticles.length) return;
-    const art = currentArticles[idx];
-    let html = `<div class="sidebar-article-title">${escapeHtml(art.title||'Article')}</div>
-      <div class="sidebar-meta-row">`;
-    if (art.year) html += `<span class="sidebar-meta-tag">${escapeHtml(String(art.year))}</span>`;
-    if (art.journal) html += `<span class="sidebar-meta-tag">${escapeHtml(art.journal)}</span>`;
-    html += '</div>';
-    if (art.tldr) html += `<div class="sidebar-section"><div class="sidebar-section-label">Summary</div><div class="sidebar-section-content">${escapeHtml(art.tldr)}</div></div>`;
-    if (art.authors?.length) html += `<div class="sidebar-section"><div class="sidebar-section-label">Authors</div><div class="sidebar-authors">${escapeHtml(art.authors.join(', '))}</div></div>`;
-    if (art.url) html += `<a class="sidebar-link" href="${escapeHtml(art.url)}" target="_blank" rel="noopener noreferrer"><svg viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>View on PubMed</a>`;
-    sidebarContent.innerHTML = html;
-    articleSidebar.classList.add('open');
-    hideCitationTooltip();
-  }
-  function closeSidebar() { articleSidebar.classList.remove('open'); }
-
-  // ── Utils ──
-  function renderMarkdown(text) {
-    let h = escapeHtml(text);
-    h = h.replace(/^### (.+)$/gm,'<h3>$1</h3>').replace(/^## (.+)$/gm,'<h3>$1</h3>').replace(/^# (.+)$/gm,'<h3>$1</h3>');
-    h = h.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>').replace(/\*(.+?)\*/g,'<em>$1</em>');
-    h = h.replace(/^[-*] (.+)$/gm,'<li>$1</li>').replace(/(<li>.*<\/li>\n?)+/g,'<ul>$&</ul>');
-    h = h.replace(/\n/g,'<br>').replace(/<\/ul><br>/g,'</ul>').replace(/<\/li><br>/g,'</li>');
-    return h;
-  }
-  function escapeHtml(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
-  function escapeAttr(s) { return s.replace(/'/g,"\\'").replace(/"/g,'&quot;'); }
-</script>
-<script type="module" src="/static/js/anatomy-viewer.js"></script>
+<script type="module" src="/static/js/app.js"></script>
 </body>
 </html>
