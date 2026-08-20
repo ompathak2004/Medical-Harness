@@ -527,13 +527,13 @@ export class AnatomyViewer {
    */
   async prepareForStructures(ids) {
     if (this._activeScene) return;
+    await this._metaReady; // _structures must be populated before the lookup
     const layers = new Set();
     for (const id of ids || []) {
       const s = this._structures.get(id);
       if (s?.layer && s.layer !== 'skin') layers.add(s.layer);
     }
     if (!layers.size) return;
-    await this._metaReady;
     await Promise.all([...layers].map((l) => this._ensureLayer(l)));
     const target = layers.size === 1 ? [...layers][0] : 'all';
     if (target === 'all') await Promise.all(LAYER_ORDER.map((l) => this._ensureLayer(l)));

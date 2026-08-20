@@ -132,3 +132,45 @@ async def test_story_caps_steps_and_lengths():
     assert len(story["steps"]) <= 6
     assert len(story["steps"][0]["title"]) <= 80
     assert len(story["steps"][0]["text"]) <= 600
+
+
+async def test_story_minority_scene_step_does_not_hijack_scene():
+    """A single scene-tagged step (e.g. pulmonary arteries in a calf-DVT
+    story) must not flip the whole story into that deep-dive scene."""
+    payload = {
+        "has_story": True,
+        "title": "Deep vein clot in the calf",
+        "steps": [
+            {
+                "title": "Deep calf veins",
+                "text": "The posterior tibial veins run deep in the calf.",
+                "anatomy_terms": ["posterior tibial vein"],
+                "overlay": "highlight",
+                "citations": [1],
+            },
+            {
+                "title": "Popliteal vein",
+                "text": "Calf veins drain into the popliteal vein.",
+                "anatomy_terms": ["popliteal vein"],
+                "overlay": "highlight",
+                "citations": [1],
+            },
+            {
+                "title": "Risk of spread",
+                "text": "Rarely a clot travels to the lung arteries.",
+                "anatomy_terms": ["pulmonary artery"],
+                "overlay": "flow",
+                "citations": [2],
+            },
+        ],
+    }
+    story = await generate_visual_story("calf clot", "a", ARTICLES, ScriptedLLM(payload))
+    assert story is not None
+    assert story["scene"] is None  # calf steps have no scene; heart is a minority
+
+
+async def test_story_majority_scene_steps_still_set_scene():
+    story = await generate_visual_story(
+        "my heart artery is choked", "a", ARTICLES, ScriptedLLM(story_payload())
+    )
+    assert story["scene"] == "heart"

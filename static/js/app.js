@@ -711,6 +711,16 @@ async function openStory(msgId) {
     } catch (err) {
       console.error('Story scene failed to load', err);
     }
+  } else {
+    // Scene-less story: make sure no deep-dive scene is active (otherwise
+    // highlights attach to hidden whole-body meshes) and clear stale crumbs.
+    try {
+      if (anatomyViewer.activeScene) await anatomyViewer.setScene(null);
+    } catch (err) {
+      console.error('Story scene exit failed', err);
+    }
+    syncSceneBar('');
+    updateAnatomyBreadcrumb(null);
   }
   showStoryStep(0);
 }

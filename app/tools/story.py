@@ -87,9 +87,23 @@ async def generate_visual_story(
         logger.info("visual story dropped: no step grounded to any structure")
         return None
 
-    all_ids = [fid for s in steps for fid in s["structure_ids"]]
+    # Scene vote is per *step*, not per structure id: one tangential step that
+    # grounds many scene-tagged meshes (e.g. pulmonary arteries in a calf-DVT
+    # story) must not drag the whole walkthrough into the wrong deep-dive.
+    # A scene wins only when it covers a strict majority of grounded steps.
+    step_scenes = [scene_for_structures(s["structure_ids"]) for s in grounded_steps]
+    scene = None
+    counts: dict[str, int] = {}
+    for sc in step_scenes:
+        if sc:
+            counts[sc] = counts.get(sc, 0) + 1
+    if counts:
+        best = max(counts, key=lambda s: counts[s])
+        if counts[best] * 2 > len(grounded_steps):
+            scene = best
+
     return {
         "title": str(data.get("title", "")).strip()[:120] or "How this works",
-        "scene": scene_for_structures(all_ids),
+        "scene": scene,
         "steps": steps,
     }
