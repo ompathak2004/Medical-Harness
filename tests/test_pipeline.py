@@ -8,22 +8,26 @@ from app.pipeline import AgentPipeline
 
 
 class FakeLLM:
-    """Scripted LLM: returns responses keyed by prompt substring."""
+    """Scripted LLM: returns responses keyed by system-prompt substring."""
 
     def __init__(self, script: dict[str, str], stream_text: str = "streamed answer [1]."):
         self.script = script
         self.stream_text = stream_text
-        self.prompts: list[str] = []
+        self.prompts: list[str] = []  # combined system + user text per call
+        self.calls: list[tuple[str, str]] = []  # (user, system) per call
 
-    async def generate(self, prompt: str) -> str:
-        self.prompts.append(prompt)
+    async def generate(self, user: str, system: str | None = None) -> str:
+        combined = f"{system or ''}\n{user}"
+        self.prompts.append(combined)
+        self.calls.append((user, system or ""))
         for key, response in self.script.items():
-            if key in prompt:
+            if key in combined:
                 return response
         return "{}"
 
-    async def generate_stream(self, prompt: str):
-        self.prompts.append(prompt)
+    async def generate_stream(self, user: str, system: str | None = None):
+        self.prompts.append(f"{system or ''}\n{user}")
+        self.calls.append((user, system or ""))
         for word in self.stream_text.split(" "):
             yield word + " "
 
@@ -161,10 +165,10 @@ class TestEmergencyPath:
 class TestDegradation:
     async def test_triage_failure_defaults_to_answer(self):
         class BrokenTriageLLM(FakeLLM):
-            async def generate(self, prompt):
-                if TRIAGE_KEY in prompt:
+            async def generate(self, user, system=None):
+                if TRIAGE_KEY in f"{system or ''}\n{user}":
                     raise RuntimeError("boom")
-                return await super().generate(prompt)
+                return await super().generate(user, system)
 
         script = {
             TOOLS_KEY: json.dumps({"selected_tools": []}),
@@ -177,7 +181,7 @@ class TestDegradation:
 
     async def test_stream_failure_falls_back_to_evidence_summary(self):
         class BrokenStreamLLM(FakeLLM):
-            async def generate_stream(self, prompt):
+            async def generate_stream(self, user, system=None):
                 raise RuntimeError("stream down")
                 yield  # pragma: no cover
 
@@ -205,3 +209,96 @@ class TestToolFlow:
         result = await p.run(["My weight is 70kg and height 175cm, what's my BMI?"], "cid")
         assert result["tool_results"]
         assert result["tool_results"][0]["tool"].lower().startswith("b")
+
+
+class TestPromptCacheLayout:
+    async def test_system_messages_identical_across_conversations(self):
+        """Each pipeline step must send a byte-identical system message for
+        different conversations, or Cerebras prefix caching cannot reuse it."""
+        p = make_pipeline({"action": "answer"})
+        await p.run(["What is hypertension?"], "cid1")
+        first_systems = [system for _, system in p.llm.calls]
+        first_users = [user for user, _ in p.llm.calls]
+
+        p.llm.calls.clear()
+        p.step_cache = type(p.step_cache)()  # fresh cache so LLM is re-hit
+        await p.run(["Why does my knee hurt after running?"], "cid2")
+        second_systems = [system for _, system in p.llm.calls]
+        second_users = [user for user, _ in p.llm.calls]
+
+        # Compare as multisets: byte-identity is the invariant, not call order
+        # (asyncio scheduling could reorder concurrent steps).
+        assert sorted(first_systems) == sorted(second_systems)
+        assert all(s for s in first_systems)  # every call has a system message
+        assert sorted(first_users) != sorted(second_users)  # dynamic content lives in user msg
+
+    async def test_dynamic_content_never_in_system(self):
+        p = make_pipeline({"action": "answer"})
+        question = "What is hypertension?"
+        await p.run([question], "cid")
+        for _, system in p.llm.calls:
+            assert question not in system
+
+
+class TestStepCaching:
+    async def test_repeat_conversation_skips_classification_calls(self):
+        p = make_pipeline({"action": "answer"})
+        await p.run(["What is flu?"], "cid1")
+        calls_first = len(p.llm.calls)
+        await p.run(["What is flu?"], "cid2")
+        calls_second = len(p.llm.calls) - calls_first
+        # Triage, tool selection, anatomy are cached; only the streamed
+        # answer + safety check hit the LLM on the repeat run.
+        assert calls_second < calls_first
+        assert p.step_cache.hits >= 3
+
+    async def test_evidence_cache_reuses_search(self):
+        class CountingEvidence(FakeEvidence):
+            def __init__(self):
+                super().__init__()
+                self.searches = 0
+
+            def search(self, conversation, conversation_id):
+                self.searches += 1
+                return super().search(conversation, conversation_id)
+
+        evidence = CountingEvidence()
+        script = {
+            TRIAGE_KEY: json.dumps({"action": "answer"}),
+            TOOLS_KEY: json.dumps({"selected_tools": []}),
+            ANATOMY_KEY: json.dumps({"has_anatomy": False}),
+            SAFETY_KEY: json.dumps({"is_safe": True, "issues": [], "revised_answer": ""}),
+        }
+        p = AgentPipeline(llm=FakeLLM(script), evidence=evidence)
+        await p.run(["What is flu?"], "cid1")
+        await p.run(["What is flu?"], "cid2")
+        assert evidence.searches == 1
+
+
+class TestTokenBudgets:
+    async def test_answer_prompt_caps_articles_and_tldr(self):
+        many_articles = [
+            {
+                "title": f"Study {i}",
+                "year": 2020 + i,
+                "journal": "J",
+                "tldr": "x" * 2000,
+                "url": f"http://x/{i}",
+            }
+            for i in range(20)
+        ]
+        script = {
+            TRIAGE_KEY: json.dumps({"action": "answer"}),
+            TOOLS_KEY: json.dumps({"selected_tools": []}),
+            ANATOMY_KEY: json.dumps({"has_anatomy": False}),
+            SAFETY_KEY: json.dumps({"is_safe": True, "issues": [], "revised_answer": ""}),
+        }
+        p = AgentPipeline(
+            llm=FakeLLM(script),
+            evidence=FakeEvidence(articles=many_articles, response="y" * 5000),
+        )
+        user = p._build_answer_user("q?", [], {"articles": many_articles, "response": "y" * 5000})
+        assert f"[{p.max_evidence_articles}]" in user
+        assert f"[{p.max_evidence_articles + 1}]" not in user
+        assert "x" * (p.max_tldr_chars + 10) not in user
+        assert "y" * (p.max_summary_chars + 10) not in user

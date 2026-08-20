@@ -6,6 +6,17 @@ Steps:
     MediSearch evidence retrieval.
  3. Answer generation (streamed token-by-token).
  4. Safety review of the full answer (may revise it).
+
+Token efficiency:
+ - Every LLM call sends a byte-identical static system message first and the
+   dynamic conversation last, so Cerebras exact-prefix prompt caching reuses
+   the instruction blocks across requests.
+ - Deterministic classification steps (triage, tool selection, anatomy
+   detection) are memoized in a short-TTL step cache keyed by the hashed
+   conversation, and MediSearch evidence lookups in a longer-TTL evidence
+   cache keyed by the normalized question.
+ - The answer prompt is bounded: top-N articles, truncated TL;DRs, capped
+   MediSearch summary.
 """
 
 from __future__ import annotations
@@ -15,16 +26,24 @@ import logging
 import time
 from collections.abc import AsyncIterator
 
+from app.cache import TTLCache, text_key
+from app.config import get_settings
 from app.evidence import EvidenceRetriever
 from app.json_utils import parse_json_response
 from app.llm import CerebrasClient
 from app.prompts import (
-    ANSWER_PROMPT,
-    EMERGENCY_GUIDANCE_PROMPT,
-    SAFETY_PROMPT,
-    TOOL_SELECTION_PROMPT,
-    TRIAGE_PROMPT,
-    VARIABLE_EXTRACTION_PROMPT,
+    ANSWER_SYSTEM,
+    ANSWER_USER,
+    EMERGENCY_GUIDANCE_SYSTEM,
+    EMERGENCY_GUIDANCE_USER,
+    SAFETY_SYSTEM,
+    SAFETY_USER,
+    TOOL_SELECTION_SYSTEM,
+    TOOL_SELECTION_USER,
+    TRIAGE_SYSTEM,
+    TRIAGE_USER,
+    VARIABLE_EXTRACTION_SYSTEM,
+    VARIABLE_EXTRACTION_USER,
 )
 from app.tools.anatomy import detect_anatomy_context
 from app.tools.clinical import TOOL_REGISTRY
@@ -49,12 +68,44 @@ def _empty_result(**overrides) -> dict:
     return base
 
 
+def _truncate(text: str, limit: int) -> str:
+    text = text or ""
+    if limit <= 0 or len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
+
+
 class AgentPipeline:
     MAX_CLARIFICATIONS = 2
 
-    def __init__(self, llm: CerebrasClient, evidence: EvidenceRetriever):
+    def __init__(
+        self,
+        llm: CerebrasClient,
+        evidence: EvidenceRetriever,
+        step_cache: TTLCache | None = None,
+        evidence_cache: TTLCache | None = None,
+    ):
         self.llm = llm
         self.evidence = evidence
+        settings = get_settings()
+        self.max_evidence_articles = settings.max_evidence_articles
+        self.max_tldr_chars = settings.max_tldr_chars
+        self.max_summary_chars = settings.max_summary_chars
+        self.step_cache = step_cache if step_cache is not None else TTLCache(
+            max_entries=settings.step_cache_entries,
+            ttl_seconds=settings.step_cache_ttl_seconds,
+        )
+        self.evidence_cache = evidence_cache if evidence_cache is not None else TTLCache(
+            max_entries=settings.evidence_cache_entries,
+            ttl_seconds=settings.evidence_cache_ttl_seconds,
+        )
+        # Formatted ONCE with the static tool registry so the system message
+        # stays byte-identical across requests (prefix-cache friendly).
+        self.tool_selection_system = TOOL_SELECTION_SYSTEM.format(
+            tool_descriptions="\n".join(
+                f"- {key}: {info['description']}" for key, info in TOOL_REGISTRY.items()
+            )
+        )
 
     # ------------------------------------------------------------------
     # Public entry points
@@ -128,7 +179,7 @@ class AgentPipeline:
         yield ("step", {"step": "tools", "message": "Checking clinical calculators…"})
         tools_task = asyncio.create_task(self._run_tools(conv_text))
         evidence_task = asyncio.create_task(
-            asyncio.to_thread(self.evidence.search, conversation, conversation_id)
+            self._retrieve_evidence(conversation, conversation_id)
         )
         tool_results = await tools_task
 
@@ -138,11 +189,11 @@ class AgentPipeline:
         # --- Step 3: streamed answer generation ---
         yield ("step", {"step": "generating", "message": "Writing your evidence-based answer…"})
         question = conversation[-1]
-        prompt = self._build_answer_prompt(question, tool_results, evidence_result)
+        answer_user = self._build_answer_user(question, tool_results, evidence_result)
 
         answer_parts: list[str] = []
         try:
-            async for chunk in self.llm.generate_stream(prompt):
+            async for chunk in self.llm.generate_stream(answer_user, system=ANSWER_SYSTEM):
                 answer_parts.append(chunk)
                 yield ("answer_chunk", {"text": chunk})
         except Exception:
@@ -204,19 +255,60 @@ class AgentPipeline:
                 count += 1
         return count
 
+    _NONE_SENTINEL = object()
+
+    async def _cached_step(self, step: str, conv_text: str, compute):
+        """Memoize a deterministic classification step by conversation hash.
+
+        ``None`` results (e.g. "no anatomy detected") are cached too, via a
+        sentinel, so negative outcomes also skip repeat LLM calls.
+        """
+        key = text_key(step, conv_text)
+        cached = self.step_cache.get(key)
+        if cached is not None:
+            logger.info("pipeline.step_cache hit step=%s", step)
+            return None if cached is self._NONE_SENTINEL else cached
+        result = await compute()
+        self.step_cache.put(key, self._NONE_SENTINEL if result is None else result)
+        return result
+
+    async def _retrieve_evidence(
+        self, conversation: list[str], conversation_id: str
+    ) -> dict:
+        """MediSearch retrieval, TTL-cached by the normalized full conversation
+        (follow-up turns change what should be retrieved, so the whole
+        conversation — not just the last question — forms the key)."""
+        key = text_key("evidence", *conversation)
+        cached = self.evidence_cache.get(key)
+        if cached is not None:
+            logger.info("pipeline.evidence_cache hit conversation_id=%s", conversation_id)
+            return cached
+        result = await asyncio.to_thread(self.evidence.search, conversation, conversation_id)
+        if result and (result.get("articles") or result.get("response")):
+            self.evidence_cache.put(key, result)
+        return result
+
     async def _triage(self, conv_text: str) -> dict:
-        try:
-            raw = await self.llm.generate(TRIAGE_PROMPT.format(conversation=conv_text))
+        async def compute():
+            raw = await self.llm.generate(
+                TRIAGE_USER.format(conversation=conv_text), system=TRIAGE_SYSTEM
+            )
             triage = parse_json_response(raw)
             logger.info("pipeline.triage action=%s", triage.get("action"))
             return triage
+
+        try:
+            return await self._cached_step("triage", conv_text, compute)
         except Exception:
             logger.exception("pipeline.triage failed, defaulting to answer")
             return {"action": "answer", "follow_up_questions": []}
 
     async def _detect_anatomy(self, conv_text: str) -> dict | None:
-        try:
+        async def compute():
             return await detect_anatomy_context(conv_text, self.llm)
+
+        try:
+            return await self._cached_step("anatomy", conv_text, compute)
         except Exception:
             logger.exception("pipeline.anatomy failed, continuing without it")
             return None
@@ -224,23 +316,25 @@ class AgentPipeline:
     async def _emergency_guidance(self, conv_text: str) -> str:
         try:
             return await self.llm.generate(
-                EMERGENCY_GUIDANCE_PROMPT.format(conversation=conv_text)
+                EMERGENCY_GUIDANCE_USER.format(conversation=conv_text),
+                system=EMERGENCY_GUIDANCE_SYSTEM,
             )
         except Exception:
             logger.exception("pipeline.emergency_guidance failed")
             return ""
 
     async def _run_tools(self, conv_text: str) -> list[dict]:
-        desc_lines = [
-            f"- {key}: {info['description']}" for key, info in TOOL_REGISTRY.items()
-        ]
-        prompt = TOOL_SELECTION_PROMPT.format(
-            tool_descriptions="\n".join(desc_lines), conversation=conv_text
-        )
-        try:
-            raw = await self.llm.generate(prompt)
+        async def compute():
+            raw = await self.llm.generate(
+                TOOL_SELECTION_USER.format(conversation=conv_text),
+                system=self.tool_selection_system,
+            )
             selection = parse_json_response(raw)
             logger.info("pipeline.tools selected=%s", selection.get("selected_tools"))
+            return selection
+
+        try:
+            selection = await self._cached_step("tool_selection", conv_text, compute)
         except Exception:
             logger.exception("pipeline.tool_selection failed")
             return []
@@ -271,22 +365,23 @@ class AgentPipeline:
     async def _extract_variables(
         self, conv_text: str, tool_name: str, variables: list[str]
     ) -> dict | None:
-        prompt = VARIABLE_EXTRACTION_PROMPT.format(
-            tool_name=tool_name,
-            variables=", ".join(variables),
-            conversation=conv_text,
+        # System message is deterministic per tool (static registry data), so
+        # each tool's extraction prompt stays prefix-cacheable.
+        system = VARIABLE_EXTRACTION_SYSTEM.format(
+            tool_name=tool_name, variables=", ".join(variables)
         )
         try:
-            raw = await self.llm.generate(prompt)
+            raw = await self.llm.generate(
+                VARIABLE_EXTRACTION_USER.format(conversation=conv_text), system=system
+            )
             parsed = parse_json_response(raw)
             return {k: v for k, v in parsed.items() if v is not None}
         except Exception:
             logger.exception("pipeline.variable_extraction failed tool=%s", tool_name)
             return None
 
-    @staticmethod
-    def _build_answer_prompt(
-        question: str, tool_results: list[dict], evidence: dict
+    def _build_answer_user(
+        self, question: str, tool_results: list[dict], evidence: dict
     ) -> str:
         if tool_results:
             tool_lines = []
@@ -299,13 +394,15 @@ class AgentPipeline:
         else:
             tool_results_section = ""
 
-        articles = evidence.get("articles", [])
+        # Token budget: cap article count and TL;DR length.
+        articles = evidence.get("articles", [])[: self.max_evidence_articles]
         if articles:
             evidence_lines = []
             for i, art in enumerate(articles, 1):
+                tldr = _truncate(art.get("tldr", ""), self.max_tldr_chars)
                 evidence_lines.append(
                     f"[{i}] {art.get('title', 'Unknown')} ({art.get('year', 'N/A')}). "
-                    f"{art.get('journal', '')}. {art.get('tldr', '')} URL: {art.get('url', '')}"
+                    f"{art.get('journal', '')}. {tldr} URL: {art.get('url', '')}"
                 )
             evidence_text = "\n".join(evidence_lines)
         else:
@@ -314,28 +411,28 @@ class AgentPipeline:
                 "medical knowledge only, and note the limitation."
             )
 
-        medi_response = evidence.get("response", "")
+        medi_response = _truncate(evidence.get("response", ""), self.max_summary_chars)
         if medi_response:
             evidence_text += f"\n\nMedisearch summary:\n{medi_response}"
 
-        return ANSWER_PROMPT.format(
+        return ANSWER_USER.format(
             question=question,
             tool_results_section=tool_results_section,
             evidence_text=evidence_text,
         )
 
     async def _safety_check(self, question: str, answer: str, evidence: dict) -> str:
-        articles = evidence.get("articles", [])
+        articles = evidence.get("articles", [])[: self.max_evidence_articles]
         citation_lines = [
             f"[{i}] {art.get('title', '')} ({art.get('year', '')})"
             for i, art in enumerate(articles, 1)
         ]
         citations_text = "\n".join(citation_lines) or "No citations available."
-        prompt = SAFETY_PROMPT.format(
+        user = SAFETY_USER.format(
             question=question, answer=answer, citations=citations_text
         )
         try:
-            raw = await self.llm.generate(prompt)
+            raw = await self.llm.generate(user, system=SAFETY_SYSTEM)
             result = parse_json_response(raw)
             if not result.get("is_safe", True) and result.get("revised_answer"):
                 logger.info("pipeline.safety revised answer, issues=%s", result.get("issues"))

@@ -12,7 +12,14 @@ os.environ.setdefault("MEDISEARCH_API_KEY", "test-key")
 from app.main import create_app  # noqa: E402
 
 
+from app.cache import TTLCache  # noqa: E402
+
+
 class FakePipeline:
+    def __init__(self):
+        self.step_cache = TTLCache()
+        self.evidence_cache = TTLCache()
+
     async def run(self, conversation, conversation_id):
         return {
             "type": "answer",
@@ -46,6 +53,22 @@ def test_health(client):
     resp = client.get("/api/health")
     assert resp.status_code == 200
     assert resp.json()["status"] == "ok"
+
+
+def test_metrics_numbers_only(client):
+    resp = client.get("/api/metrics")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body) == {"llm", "step_cache", "evidence_cache"}
+    llm = body["llm"]
+    assert set(llm) == {
+        "requests", "prompt_tokens", "completion_tokens",
+        "cached_tokens", "prompt_cache_hit_ratio",
+    }
+    # PHI-free contract: every value is a plain number.
+    for section in body.values():
+        for value in section.values():
+            assert isinstance(value, (int, float))
 
 
 def test_index_serves_html(client):

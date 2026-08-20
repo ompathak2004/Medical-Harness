@@ -90,3 +90,15 @@ async def chat_stream(req: ChatRequest, request: Request) -> StreamingResponse:
 @router.get("/health")
 async def health() -> dict:
     return {"status": "ok", "version": __version__}
+
+
+@router.get("/metrics")
+async def metrics(request: Request) -> dict:
+    """Token-usage and cache statistics. Numbers only — no PHI, no text."""
+    pipeline = request.app.state.pipeline
+    llm = getattr(request.app.state, "llm", None) or pipeline.llm
+    return {
+        "llm": llm.usage_stats(),
+        "step_cache": pipeline.step_cache.stats(),
+        "evidence_cache": pipeline.evidence_cache.stats(),
+    }

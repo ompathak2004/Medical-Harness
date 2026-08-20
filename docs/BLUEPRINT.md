@@ -96,8 +96,17 @@ variables, callable). Missing variables degrade gracefully via defaults.
 
 ## 5. 3D anatomy viewer
 
-- three.js procedural human body (skin / muscles / skeleton / vascular
-  layers) with per-region hitboxes; no heavyweight GLTF download on load.
+- Real human anatomy from **BodyParts3D 4.0** (CC-BY-4.0), preprocessed by
+  `scripts/build_anatomy_assets.py` into six meshopt-compressed GLB layers
+  (skin / skeleton / muscles / organs / vascular / nerves, ~14 MB total)
+  plus `structures.json` — 2,000+ named structures with layer, body-region
+  and clinical-group metadata.
+- Progressive loading: skin + skeleton first, other layers lazy-loaded on
+  demand; per-layer shared materials and meshopt decoding keep GPU and
+  network cost low.
+- Granular picking: raycast hover/select down to individual structures
+  (a specific muscle, bone, organ or vessel) with a search box and a
+  Body › Region › Structure breadcrumb for navigation.
 - The anatomy LLM step maps conversation → body-region IDs
   (`app/tools/anatomy.py: ANATOMY_REGIONS`), and the viewer auto-highlights
   the primary region with a camera transition + pulse.
@@ -106,25 +115,52 @@ variables, callable). Missing variables degrade gracefully via defaults.
   point, the agent gets clinical precision.
 - WebGL-unavailable environments fall back to text.
 
-## 6. API surface
+## 6. Token efficiency & prompt caching
+
+Cerebras prompt caching is automatic, prefix-based (128-token blocks,
+exact prefix match). The pipeline is laid out to exploit it:
+
+- **Static-system / dynamic-user split** (`app/prompts.py`): every LLM call
+  sends a byte-identical static system message first (instructions, JSON
+  schemas, tool registry, region list — formatted once at startup) and only
+  the conversation/evidence in the user message. Repeated requests reuse
+  the cached instruction prefix; only the short dynamic tail is recomputed.
+- **`prompt_cache_key`** (optional, `CEREBRAS_PROMPT_CACHE_KEY`): routes
+  requests to the same cache shard for higher hit rates when enabled on
+  the account.
+- **Result caches** (`app/cache.py`, in-process TTL+LRU, no external
+  infra): a *step cache* memoizes deterministic classification steps
+  (triage, tool selection, anatomy detection) by hashed conversation
+  (10 min TTL), and an *evidence cache* memoizes MediSearch retrievals by
+  normalized question (1 h TTL). A repeated question costs zero
+  classification LLM calls and zero retrieval latency.
+- **Token budgets** (`app/config.py`): the answer prompt is bounded — top
+  8 articles, TL;DRs truncated to 400 chars, MediSearch summary capped at
+  1,500 chars.
+- **Observability**: `GET /api/metrics` exposes cumulative token usage
+  (including `cached_tokens` reported by Cerebras and the resulting
+  prompt-cache hit ratio) plus cache hit/miss stats — numbers only, no PHI.
+
+## 7. API surface
 
 | Route | Purpose |
 |---|---|
 | `POST /api/chat/stream` | SSE streaming chat (primary) |
 | `POST /api/chat` | Buffered chat (back-compat, evals) |
 | `GET /api/health` | Health/version probe |
+| `GET /api/metrics` | Token usage + cache stats (numbers only, no PHI) |
 | `GET /` + `/static/*` | Frontend |
 
 Request limits: ≤40 messages, ≤8,000 chars/message, 20 req/min per client
 (in-memory sliding window; swap for Redis when scaling horizontally).
 
-## 7. Configuration
+## 8. Configuration
 
 All via environment (pydantic-settings, `.env` supported) — see
 `.env.example`. Required: `CEREBRAS_API_KEY`, `MEDISEARCH_API_KEY`.
 No secrets are ever committed.
 
-## 8. Deployment (DigitalOcean App Platform)
+## 9. Deployment (DigitalOcean App Platform)
 
 - Multi-stage `Dockerfile` (uv-installed deps → slim runtime, non-root
   user, honors `$PORT`; App Platform sets `PORT=8080`).
@@ -133,16 +169,16 @@ No secrets are ever committed.
 - Health check: `GET /api/health`.
 - `deploy/app-spec.yaml` is the source of truth for the app spec.
 
-## 9. Quality gates
+## 10. Quality gates
 
-- `uv run pytest` — 38 unit/API tests: calculators against known scores,
+- `uv run pytest` — 51 unit/API tests: calculators against known scores,
   JSON-parse fuzz cases, pipeline paths (answer / follow-up / emergency /
   clarification-cap / degradation) with mocked clients, API validation and
   SSE contract tests.
 - `eval_healthbench.py` — HealthBench Hard rubric evaluation, migrated to
   the Cerebras stack (`uv run python eval_healthbench.py --limit 5`).
 
-## 10. Future work
+## 11. Future work
 
 - Redis-backed rate limiting + horizontal scaling.
 - Conversation persistence and shareable answer links.

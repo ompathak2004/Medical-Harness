@@ -107,11 +107,21 @@
       </button>
     </div>
 
+    <div class="anatomy-search">
+      <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input type="search" id="anatomy-search-input" placeholder="Search a muscle, bone, organ…" autocomplete="off" aria-label="Search anatomy structures">
+      <div class="anatomy-search-results" id="anatomy-search-results" hidden></div>
+    </div>
+
+    <div class="anatomy-breadcrumb" id="anatomy-breadcrumb" hidden></div>
+
     <div class="anatomy-layer-bar">
       <button type="button" class="layer-btn active" data-layer="skin">Skin</button>
       <button type="button" class="layer-btn" data-layer="muscles">Muscles</button>
       <button type="button" class="layer-btn" data-layer="skeleton">Skeleton</button>
+      <button type="button" class="layer-btn" data-layer="organs">Organs</button>
       <button type="button" class="layer-btn" data-layer="vascular">Vascular</button>
+      <button type="button" class="layer-btn" data-layer="nerves">Nerves</button>
       <button type="button" class="layer-btn" data-layer="all">All</button>
     </div>
 
@@ -144,8 +154,14 @@
     <div class="anatomy-info" id="anatomy-info-panel">
       <div class="anatomy-info-empty">
         <svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
-        Hover or click a body region to select it
+        Hover or click any structure — down to a single muscle, bone or organ
       </div>
+    </div>
+
+    <div class="anatomy-attribution">
+      3D anatomy: <a href="https://lifesciencedb.jp/bp3d/" target="_blank" rel="noopener">BodyParts3D</a>,
+      © The Database Center for Life Science, licensed under
+      <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC-BY-4.0</a>
     </div>
   </aside>
 </div><!-- /main-layout -->

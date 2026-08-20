@@ -157,3 +157,58 @@
 @media (max-width: 768px) {
   .anatomy-canvas-wrap { min-height: 220px; }
 }
+
+/* ── Structure search ──────────────────────────────────────────────────── */
+.anatomy-search {
+  position: relative; display: flex; align-items: center; gap: 8px;
+  margin: 10px 16px 0; padding: 8px 12px;
+  background: var(--bg-surface); border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+}
+.anatomy-search svg {
+  width: 14px; height: 14px; flex: none;
+  stroke: var(--text-tertiary); fill: none; stroke-width: 2;
+}
+.anatomy-search input {
+  flex: 1; min-width: 0; border: none; background: transparent; outline: none;
+  color: var(--text-primary); font-size: .8rem; font-family: inherit;
+}
+.anatomy-search input::placeholder { color: var(--text-tertiary); }
+.anatomy-search-results {
+  position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 30;
+  max-height: 280px; overflow-y: auto;
+  background: var(--bg-elevated, var(--bg-surface));
+  border: 1px solid var(--border-default); border-radius: var(--radius-md);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .25);
+}
+.anatomy-search-item {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  width: 100%; padding: 8px 12px; border: none; background: transparent;
+  cursor: pointer; font-family: inherit; text-align: left;
+}
+.anatomy-search-item:hover { background: var(--brand-soft); }
+.anatomy-search-name { font-size: .8rem; font-weight: 600; color: var(--text-primary); }
+.anatomy-search-meta { font-size: .68rem; color: var(--text-tertiary); text-transform: capitalize; }
+
+/* ── Breadcrumb ────────────────────────────────────────────────────────── */
+.anatomy-breadcrumb {
+  display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
+  margin: 8px 16px 0; font-size: .72rem; color: var(--text-secondary);
+}
+.anatomy-breadcrumb span:last-child { color: var(--brand-strong); font-weight: 600; }
+.anatomy-breadcrumb svg {
+  width: 11px; height: 11px; stroke: var(--text-tertiary); fill: none; stroke-width: 2;
+}
+
+/* ── Structure meta line in info panel ─────────────────────────────────── */
+.anatomy-structure-meta {
+  margin-top: 4px; font-size: .74rem; color: var(--text-secondary);
+}
+
+/* ── Attribution footer ────────────────────────────────────────────────── */
+.anatomy-attribution {
+  margin: 4px 16px 12px; font-size: .64rem; line-height: 1.5;
+  color: var(--text-tertiary);
+}
+.anatomy-attribution a { color: var(--text-secondary); text-decoration: underline; }
+.anatomy-attribution a:hover { color: var(--brand-strong); }

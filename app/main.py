@@ -42,8 +42,10 @@ def create_app() -> FastAPI:
             max_tokens=settings.llm_max_tokens,
             timeout_seconds=settings.llm_timeout_seconds,
             max_retries=settings.llm_max_retries,
+            prompt_cache_key=settings.cerebras_prompt_cache_key,
         )
         evidence = EvidenceRetriever(api_key=settings.medisearch_api_key)
+        app.state.llm = llm
         app.state.pipeline = AgentPipeline(llm=llm, evidence=evidence)
         logger.info("startup complete model=%s version=%s", settings.cerebras_model, __version__)
         yield

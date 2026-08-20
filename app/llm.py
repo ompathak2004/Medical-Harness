@@ -46,11 +46,18 @@ class CerebrasClient:
         max_tokens: int = 4096,
         timeout_seconds: float = 90.0,
         max_retries: int = 3,
+        prompt_cache_key: str = "",
     ):
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.max_retries = max_retries
+        self.prompt_cache_key = prompt_cache_key
+        # Cumulative usage counters (PHI-free, exposed via /api/metrics).
+        self.total_requests = 0
+        self.total_prompt_tokens = 0
+        self.total_completion_tokens = 0
+        self.total_cached_tokens = 0
         self._client = httpx.AsyncClient(
             base_url=base_url,
             headers={"Authorization": f"Bearer {api_key}"},
@@ -60,22 +67,60 @@ class CerebrasClient:
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    def _payload(self, prompt: str, *, stream: bool = False) -> dict:
+    def usage_stats(self) -> dict:
+        prompt = self.total_prompt_tokens
         return {
+            "requests": self.total_requests,
+            "prompt_tokens": prompt,
+            "completion_tokens": self.total_completion_tokens,
+            "cached_tokens": self.total_cached_tokens,
+            "prompt_cache_hit_ratio": (
+                round(self.total_cached_tokens / prompt, 4) if prompt else 0.0
+            ),
+        }
+
+    def _record_usage(self, usage: dict | None) -> None:
+        if not usage:
+            return
+        prompt = usage.get("prompt_tokens") or 0
+        completion = usage.get("completion_tokens") or 0
+        cached = (usage.get("prompt_tokens_details") or {}).get("cached_tokens") or 0
+        self.total_prompt_tokens += prompt
+        self.total_completion_tokens += completion
+        self.total_cached_tokens += cached
+        logger.info(
+            "llm.usage prompt_tokens=%d completion_tokens=%d cached_tokens=%d",
+            prompt, completion, cached,
+        )
+
+    def _payload(self, user: str, system: str | None, *, stream: bool = False) -> dict:
+        # Static system message FIRST so Cerebras prefix caching (exact-match,
+        # 128-token blocks) can reuse it across requests; dynamic content last.
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": user})
+        payload = {
             "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
             "stream": stream,
         }
+        if stream:
+            payload["stream_options"] = {"include_usage": True}
+        if self.prompt_cache_key:
+            payload["prompt_cache_key"] = self.prompt_cache_key
+        return payload
 
-    async def generate(self, prompt: str) -> str:
+    async def generate(self, user: str, system: str | None = None) -> str:
         """Buffered completion. Retries transient failures with backoff."""
         last_exc: Exception | None = None
         for attempt in range(1, self.max_retries + 1):
             try:
+                self.total_requests += 1
                 resp = await self._client.post(
-                    "/chat/completions", json=self._payload(prompt)
+                    "/chat/completions", json=self._payload(user, system)
                 )
                 if resp.status_code in _RETRYABLE_STATUS:
                     raise httpx.HTTPStatusError(
@@ -86,9 +131,10 @@ class CerebrasClient:
                 resp.raise_for_status()
                 data = resp.json()
                 text = data["choices"][0]["message"]["content"] or ""
+                self._record_usage(data.get("usage"))
                 logger.info(
                     "llm.generate ok model=%s prompt_chars=%d response_chars=%d",
-                    self.model, len(prompt), len(text),
+                    self.model, len(user) + len(system or ""), len(text),
                 )
                 return text
             except (httpx.TimeoutException, httpx.HTTPStatusError, httpx.TransportError) as exc:
@@ -107,7 +153,9 @@ class CerebrasClient:
         logger.error("llm.generate exhausted retries")
         raise LLMError("LLM request failed after retries") from last_exc
 
-    async def generate_stream(self, prompt: str) -> AsyncIterator[str]:
+    async def generate_stream(
+        self, user: str, system: str | None = None
+    ) -> AsyncIterator[str]:
         """Streaming completion — yields text chunks as they arrive.
 
         Retries only apply before the first chunk is emitted.
@@ -116,8 +164,10 @@ class CerebrasClient:
         for attempt in range(1, self.max_retries + 1):
             emitted = False
             try:
+                self.total_requests += 1
                 async with self._client.stream(
-                    "POST", "/chat/completions", json=self._payload(prompt, stream=True)
+                    "POST", "/chat/completions",
+                    json=self._payload(user, system, stream=True),
                 ) as resp:
                     if resp.status_code in _RETRYABLE_STATUS:
                         raise httpx.HTTPStatusError(
@@ -136,11 +186,11 @@ class CerebrasClient:
                             chunk = json.loads(payload)
                         except json.JSONDecodeError:
                             continue
-                        delta = (
-                            chunk.get("choices", [{}])[0]
-                            .get("delta", {})
-                            .get("content")
-                        )
+                        if chunk.get("usage"):
+                            # Final chunk (stream_options.include_usage).
+                            self._record_usage(chunk["usage"])
+                        choices = chunk.get("choices") or [{}]
+                        delta = choices[0].get("delta", {}).get("content")
                         if delta:
                             emitted = True
                             yield delta

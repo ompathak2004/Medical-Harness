@@ -18,9 +18,24 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 4096
     llm_timeout_seconds: float = 90.0
     llm_max_retries: int = 3
+    # Optional Cerebras prompt_cache_key: requests sharing a key are routed
+    # to the same cache shard, improving prefix-cache hit rates. Requires the
+    # feature to be enabled on the Cerebras account; empty = omitted.
+    cerebras_prompt_cache_key: str = ""
 
     # --- Evidence retrieval ---
     medisearch_api_key: str
+
+    # --- Token budgets (answer prompt) ---
+    max_evidence_articles: int = 8
+    max_tldr_chars: int = 400
+    max_summary_chars: int = 1500
+
+    # --- Result caches (in-process TTL+LRU) ---
+    evidence_cache_entries: int = 256
+    evidence_cache_ttl_seconds: float = 3600.0
+    step_cache_entries: int = 512
+    step_cache_ttl_seconds: float = 600.0
 
     # --- Server ---
     port: int = 8080

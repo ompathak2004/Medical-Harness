@@ -65,6 +65,7 @@ let msgCounter = 0;
 let anatomyViewer = null;
 let anatomyInitFailed = false;
 let selectedRegionId = null;
+let selectedStructure = null;
 
 const nextMsgId = () => 'm' + (++msgCounter);
 const reducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -491,7 +492,14 @@ function initAnatomyViewerIfNeeded() {
     anatomyViewer = new AnatomyViewer(anatomyCanvas, { accentColor: accent, reducedMotion });
     anatomyViewer.onHover(onAnatomyHover);
     anatomyViewer.onSelect(onAnatomySelect);
-    anatomyLoading.classList.add('hidden');
+    // Assets stream in progressively — hide the spinner once skin+skeleton land.
+    anatomyViewer.ready
+      .then(() => anatomyLoading.classList.add('hidden'))
+      .catch(err => {
+        console.error('AnatomyViewer assets failed to load', err);
+        anatomyLoading.classList.add('hidden');
+        anatomyFallback.classList.add('visible');
+      });
   } catch (err) {
     console.error('AnatomyViewer failed to initialize', err);
     anatomyInitFailed = true;
@@ -513,16 +521,40 @@ function anatomySubPartsFor(regionId) {
   return (currentAnatomyContext?.regions || []).find(r => r.id === regionId)?.sub_parts || [];
 }
 
+function updateAnatomyBreadcrumb(data) {
+  const crumb = document.getElementById('anatomy-breadcrumb');
+  if (!crumb) return;
+  if (!data) { crumb.hidden = true; return; }
+  const regionLabel = ANATOMY_VIEWER_REGIONS[data.region]?.label || data.region;
+  const parts = ['Body', regionLabel];
+  if (data.structureName) parts.push(data.structureName);
+  crumb.innerHTML = parts
+    .map(p => `<span>${escapeHtml(p)}</span>`)
+    .join('<svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>');
+  crumb.hidden = false;
+}
+
 function onAnatomySelect(data) {
   if (!data || !data.region) return;
   selectedRegionId = data.region;
-  const label = data.label || ANATOMY_VIEWER_REGIONS[data.region]?.label || data.region;
+  selectedStructure = data.structureName
+    ? { name: data.structureName, group: data.group, layer: data.layer }
+    : null;
+  const regionLabel = ANATOMY_VIEWER_REGIONS[data.region]?.label || data.region;
+  const label = data.structureName || data.label || regionLabel;
   const subParts = anatomySubPartsFor(data.region);
+  updateAnatomyBreadcrumb(data);
 
   let html = `<div class="anatomy-region-header">
     <div class="anatomy-region-name">${escapeHtml(label)}</div>
     <div class="anatomy-region-badge">${escapeHtml(data.layer || 'region')}</div>
   </div>`;
+
+  if (data.structureName) {
+    html += `<div class="anatomy-structure-meta">
+      ${escapeHtml(regionLabel)}${data.group ? ` · part of ${escapeHtml(data.group)}` : ''}
+    </div>`;
+  }
 
   if (subParts.length) {
     html += `<div class="anatomy-subparts-label">Narrow it down</div><div class="anatomy-subparts">`;
@@ -540,9 +572,13 @@ function onAnatomySelect(data) {
 
 function confirmAnatomyRegion() {
   if (!selectedRegionId) return;
-  const label = ANATOMY_VIEWER_REGIONS[selectedRegionId]?.label || selectedRegionId;
+  const regionLabel = ANATOMY_VIEWER_REGIONS[selectedRegionId]?.label || selectedRegionId;
   closeAnatomyPanel();
-  submitMessage(`The issue is in my ${label}.`);
+  if (selectedStructure?.name) {
+    submitMessage(`The issue is in my ${regionLabel}, specifically the ${selectedStructure.name}.`);
+  } else {
+    submitMessage(`The issue is in my ${regionLabel}.`);
+  }
 }
 
 function confirmAnatomySubpart(regionLabel, subPart) {
@@ -773,6 +809,56 @@ panelBackdrop?.addEventListener('click', () => { closeArticleSidebar(); closeAna
 
 anatomyLayerBar?.querySelectorAll('.layer-btn').forEach(btn => {
   btn.addEventListener('click', () => setAnatomyLayer(btn.dataset.layer));
+});
+
+// ── Anatomy structure search ─────────────────────────────────────────────
+const anatomySearchInput = document.getElementById('anatomy-search-input');
+const anatomySearchResults = document.getElementById('anatomy-search-results');
+
+function renderAnatomySearchResults(matches) {
+  if (!anatomySearchResults) return;
+  if (!matches.length) {
+    anatomySearchResults.hidden = true;
+    anatomySearchResults.innerHTML = '';
+    return;
+  }
+  anatomySearchResults.innerHTML = matches.map(m =>
+    `<button type="button" class="anatomy-search-item" data-structure-id="${escapeAttr(m.id)}">
+      <span class="anatomy-search-name">${escapeHtml(m.name)}</span>
+      <span class="anatomy-search-meta">${escapeHtml(m.layer)} · ${escapeHtml(m.regionLabel)}</span>
+    </button>`
+  ).join('');
+  anatomySearchResults.hidden = false;
+}
+
+anatomySearchInput?.addEventListener('input', () => {
+  const q = anatomySearchInput.value;
+  if (!anatomyViewer || q.trim().length < 2) {
+    renderAnatomySearchResults([]);
+    return;
+  }
+  renderAnatomySearchResults(anatomyViewer.search(q, 12));
+});
+
+anatomySearchResults?.addEventListener('click', e => {
+  const item = e.target.closest('.anatomy-search-item');
+  if (!item || !anatomyViewer) return;
+  anatomyViewer.selectStructure(item.dataset.structureId).then(() => {
+    // Sync the layer bar with the layer selectStructure may have switched to.
+    const active = anatomyViewer?.activeLayer;
+    if (active) {
+      anatomyLayerBar?.querySelectorAll('.layer-btn').forEach(b =>
+        b.classList.toggle('active', b.dataset.layer === active));
+    }
+  });
+  renderAnatomySearchResults([]);
+  anatomySearchInput.value = '';
+});
+
+document.addEventListener('click', e => {
+  if (anatomySearchResults && !e.target.closest('.anatomy-search')) {
+    anatomySearchResults.hidden = true;
+  }
 });
 document.querySelectorAll('.view-btn[data-view]').forEach(btn => {
   btn.addEventListener('click', () => anatomyViewer?.setView(btn.dataset.view));

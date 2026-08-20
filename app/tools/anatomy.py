@@ -242,16 +242,16 @@ ANATOMY_REGIONS = {
 
 
 # ---------------------------------------------------------------------------
-# Prompt for anatomy detection
+# Prompt for anatomy detection.
+# The system message is fully static (region list comes from the static
+# ANATOMY_REGIONS registry and is formatted once at import time) so Cerebras
+# prefix caching can reuse it; only the conversation is sent per request.
 # ---------------------------------------------------------------------------
 
-ANATOMY_DETECT_PROMPT = """You are an anatomy detection assistant. Analyze the patient conversation below and determine if a specific body region is being discussed.
+ANATOMY_DETECT_SYSTEM_TEMPLATE = """You are an anatomy detection assistant. Analyze the patient conversation and determine if a specific body region is being discussed.
 
 Available body regions (use these exact keys):
 {region_list}
-
-Conversation:
-{conversation}
 
 Respond with EXACTLY one JSON object (no markdown fences, no extra text):
 {{
@@ -270,6 +270,17 @@ Rules:
 - For general questions (like "what is diabetes?"), set has_anatomy to false.
 - The location_question should help pinpoint the EXACT spot within the body region (e.g., "Is the pain in the inner or outer part of your calf?")."""
 
+# Formatted once with the static region registry — byte-identical across
+# requests, which is what Cerebras exact-prefix caching needs.
+ANATOMY_DETECT_SYSTEM = ANATOMY_DETECT_SYSTEM_TEMPLATE.format(
+    region_list="\n".join(
+        f"  - {key}: {info['label']}" for key, info in ANATOMY_REGIONS.items()
+    )
+)
+
+ANATOMY_DETECT_USER = """Conversation:
+{conversation}"""
+
 
 async def detect_anatomy_context(conv_text: str, llm_client) -> dict | None:
     """
@@ -277,7 +288,7 @@ async def detect_anatomy_context(conv_text: str, llm_client) -> dict | None:
 
     Args:
         conv_text: Formatted conversation text.
-        llm_client: LLM client with an async ``generate(prompt) -> str`` method.
+        llm_client: LLM client with an async ``generate(user, system=None) -> str`` method.
 
     Returns:
         dict with anatomy context, or None if no anatomy detected.
@@ -288,19 +299,11 @@ async def detect_anatomy_context(conv_text: str, llm_client) -> dict | None:
             "location_question": "..."
         }
     """
-    # Build the region list for the prompt
-    region_lines = []
-    for key, info in ANATOMY_REGIONS.items():
-        region_lines.append(f"  - {key}: {info['label']}")
-    region_list_text = "\n".join(region_lines)
-
-    prompt = ANATOMY_DETECT_PROMPT.format(
-        region_list=region_list_text,
-        conversation=conv_text,
-    )
-
     try:
-        raw = await llm_client.generate(prompt)
+        raw = await llm_client.generate(
+            ANATOMY_DETECT_USER.format(conversation=conv_text),
+            system=ANATOMY_DETECT_SYSTEM,
+        )
         result = parse_json_response(raw)
 
         if not result.get("has_anatomy"):
