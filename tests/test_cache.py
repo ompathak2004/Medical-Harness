@@ -6,8 +6,9 @@ from app.cache import TTLCache, text_key
 
 
 class TestTextKey:
-    def test_stable_and_normalized(self):
-        assert text_key("What is  FLU? ") == text_key("what is flu?")
+    def test_stable_and_exact(self):
+        assert text_key("What is  FLU? ") != text_key("what is flu?")
+        assert text_key("a\x1fb", "c") != text_key("a", "b\x1fc")
         assert text_key("a", "b") != text_key("ab")  # separator prevents collisions
         assert text_key("a", "b") != text_key("b", "a")
 

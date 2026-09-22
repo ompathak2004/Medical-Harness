@@ -1,29 +1,10 @@
-"""Agent pipeline — evidence-first medical QA workflow (async).
-
-Steps:
- 1. Triage (emergency / ask / answer) + anatomy detection, run concurrently.
- 2. In parallel: clinical tool selection→extraction→execution AND
-    MediSearch evidence retrieval.
- 3. Answer generation (streamed token-by-token).
- 4. Safety review of the full answer (may revise it).
-
-Token efficiency:
- - Every LLM call sends a byte-identical static system message first and the
-   dynamic conversation last, so Cerebras exact-prefix prompt caching reuses
-   the instruction blocks across requests.
- - Deterministic classification steps (triage, tool selection, anatomy
-   detection) are memoized in a short-TTL step cache keyed by the hashed
-   conversation, and MediSearch evidence lookups in a longer-TTL evidence
-   cache keyed by the normalized question.
- - The answer prompt is bounded: top-N articles, truncated TL;DRs, capped
-   MediSearch summary.
-"""
-
 from __future__ import annotations
 
 import asyncio
 import logging
 import time
+import inspect
+from contextvars import ContextVar
 from collections.abc import AsyncIterator
 
 from app.cache import TTLCache, text_key
@@ -49,6 +30,11 @@ from app.tools.anatomy import detect_anatomy_context
 from app.tools.clinical import TOOL_REGISTRY
 
 logger = logging.getLogger(__name__)
+cache_scope = ContextVar("cache_scope", default="internal")
+
+
+class ReviewUnavailable(RuntimeError):
+    pass
 
 
 def _empty_result(**overrides) -> dict:
@@ -76,7 +62,7 @@ def _truncate(text: str, limit: int) -> str:
 
 
 class AgentPipeline:
-    MAX_CLARIFICATIONS = 2
+    MAX_CLARIFICATIONS = 1
 
     def __init__(
         self,
@@ -127,29 +113,14 @@ class AgentPipeline:
         t0 = time.monotonic()
         conv_text = self._format_conversation(conversation)
 
-        # --- Step 1: triage + anatomy detection concurrently ---
-        yield ("step", {"step": "triage", "message": "Analyzing your question…"})
-        triage_task = asyncio.create_task(self._triage(conv_text))
-        anatomy_task = asyncio.create_task(self._detect_anatomy(conv_text))
-        triage = await triage_task
-
-        action = triage.get("action", "answer")
-
-        # --- Emergency short-circuit ---
+        yield ("step", {"step": "triage", "message": "Understanding your question…"})
+        triage = await self._triage(conv_text)
+        action = triage["action"]
         if action == "emergency":
-            guidance = await self._emergency_guidance(conv_text)
-            anatomy_context = await anatomy_task
-            logger.info(
-                "pipeline.emergency conversation_id=%s elapsed=%.1fs",
-                conversation_id, time.monotonic() - t0,
-            )
             yield ("result", _empty_result(
-                type="emergency",
-                emergency=True,
-                emergency_message=triage.get("emergency_message", "")
-                or "Your symptoms may indicate a medical emergency. Please contact your local emergency services immediately.",
-                answer=guidance or None,
-                anatomy_context=anatomy_context,
+                type="emergency", emergency=True,
+                emergency_message="Your symptoms may need immediate medical attention. Contact your local emergency services now. Do not wait for an online answer.",
+                answer="If possible, ask someone nearby to stay with you and follow the emergency dispatcher's instructions.",
             ))
             return
 
@@ -162,7 +133,7 @@ class AgentPipeline:
                     prior_asks, self.MAX_CLARIFICATIONS,
                 )
             else:
-                anatomy_context = await anatomy_task
+                anatomy_context = await self._detect_anatomy(conv_text)
                 logger.info(
                     "pipeline.follow_up conversation_id=%s elapsed=%.1fs",
                     conversation_id, time.monotonic() - t0,
@@ -170,51 +141,44 @@ class AgentPipeline:
                 yield ("result", _empty_result(
                     type="follow_up",
                     follow_up_questions=triage["follow_up_questions"],
-                    preliminary_info=triage.get("preliminary_info", ""),
+                    preliminary_info="A few details will help me understand your question. You can write ‘not sure’ for anything you do not know.",
                     anatomy_context=anatomy_context,
                 ))
                 return
 
         # --- Step 2: clinical tools + evidence retrieval in parallel ---
         yield ("step", {"step": "tools", "message": "Checking clinical calculators…"})
-        tools_task = asyncio.create_task(self._run_tools(conv_text))
-        evidence_task = asyncio.create_task(
-            self._retrieve_evidence(conversation, conversation_id)
+        tool_results, evidence_result = await asyncio.gather(
+            self._run_tools(conv_text), self._retrieve_evidence(conversation, conversation_id)
         )
-        tool_results = await tools_task
-
-        yield ("step", {"step": "evidence", "message": "Searching medical literature…"})
-        evidence_result = await evidence_task
+        evidence_result = dict(evidence_result)
+        evidence_result["articles"] = evidence_result.get("articles", [])[:self.max_evidence_articles]
+        if not evidence_result["articles"]:
+            yield ("result", _empty_result(
+                answer="I couldn’t retrieve supporting medical sources for this question. Please try again, or discuss your symptoms with a healthcare professional. If symptoms are severe or rapidly worsening, seek urgent care.",
+                evidence_status="unavailable",
+            ))
+            return
 
         # --- Step 3: streamed answer generation ---
         yield ("step", {"step": "generating", "message": "Writing your evidence-based answer…"})
-        question = conversation[-1]
+        question = conv_text
         answer_user = self._build_answer_user(question, tool_results, evidence_result)
 
         answer_parts: list[str] = []
         try:
             async for chunk in self.llm.generate_stream(answer_user, system=ANSWER_SYSTEM):
                 answer_parts.append(chunk)
-                yield ("answer_chunk", {"text": chunk})
-        except Exception:
-            logger.exception("pipeline.answer_stream failed conversation_id=%s", conversation_id)
-            if not answer_parts:
-                # Degrade to MediSearch's own summary if we have one.
-                fallback = evidence_result.get("response", "")
-                if fallback:
-                    answer_parts.append(fallback)
-                    yield ("answer_chunk", {"text": fallback})
-                else:
-                    answer_parts.append(
-                        "I'm sorry — I couldn't generate an answer right now. "
-                        "Please try again in a moment."
-                    )
+
+        except Exception as exc:
+            raise ReviewUnavailable("Answer generation was interrupted. Please try again.") from exc
         answer = "".join(answer_parts)
 
         # --- Step 4: safety review ---
         yield ("step", {"step": "safety", "message": "Verifying answer safety…"})
         answer = await self._safety_check(question, answer, evidence_result)
-        anatomy_context = await anatomy_task
+        anatomy_context = await self._detect_anatomy(conv_text)
+        yield ("answer_chunk", {"text": answer})
 
         logger.info(
             "pipeline.answer conversation_id=%s tools=%d articles=%d answer_chars=%d elapsed=%.1fs",
@@ -263,30 +227,22 @@ class AgentPipeline:
         ``None`` results (e.g. "no anatomy detected") are cached too, via a
         sentinel, so negative outcomes also skip repeat LLM calls.
         """
-        key = text_key(step, conv_text)
-        cached = self.step_cache.get(key)
-        if cached is not None:
-            logger.info("pipeline.step_cache hit step=%s", step)
-            return None if cached is self._NONE_SENTINEL else cached
-        result = await compute()
-        self.step_cache.put(key, self._NONE_SENTINEL if result is None else result)
-        return result
+        key = text_key("v3", cache_scope.get(), getattr(self.llm, "model", "test"), step, conv_text)
+        async def wrapped():
+            value = await compute()
+            return self._NONE_SENTINEL if value is None else value
+        cached = await self.step_cache.get_or_compute(key, wrapped)
+        return None if cached is self._NONE_SENTINEL else cached
 
-    async def _retrieve_evidence(
-        self, conversation: list[str], conversation_id: str
-    ) -> dict:
-        """MediSearch retrieval, TTL-cached by the normalized full conversation
-        (follow-up turns change what should be retrieved, so the whole
-        conversation — not just the last question — forms the key)."""
-        key = text_key("evidence", *conversation)
-        cached = self.evidence_cache.get(key)
-        if cached is not None:
-            logger.info("pipeline.evidence_cache hit conversation_id=%s", conversation_id)
-            return cached
-        result = await asyncio.to_thread(self.evidence.search, conversation, conversation_id)
-        if result and (result.get("articles") or result.get("response")):
-            self.evidence_cache.put(key, result)
-        return result
+    async def _retrieve_evidence(self, conversation: list[str], conversation_id: str) -> dict:
+        key = text_key("evidence-v3", cache_scope.get(), conversation_id, *conversation)
+        async def compute():
+            if inspect.iscoroutinefunction(self.evidence.search):
+                return await self.evidence.search(conversation, conversation_id)
+            return await asyncio.to_thread(self.evidence.search, conversation, conversation_id)
+        return await self.evidence_cache.get_or_compute(
+            key, compute, cache_if=lambda value: bool(value.get("articles"))
+        )
 
     async def _triage(self, conv_text: str) -> dict:
         async def compute():
@@ -294,14 +250,20 @@ class AgentPipeline:
                 TRIAGE_USER.format(conversation=conv_text), system=TRIAGE_SYSTEM
             )
             triage = parse_json_response(raw)
-            logger.info("pipeline.triage action=%s", triage.get("action"))
+            if triage.get("action") not in {"ask", "answer", "emergency"}:
+                raise ReviewUnavailable("Unable to assess this question. Please try again.")
+            questions = triage.get("follow_up_questions", [])
+            if not isinstance(questions, list) or any(not isinstance(q, str) or not q.strip() for q in questions):
+                raise ReviewUnavailable("Invalid clarification questions. Please try again.")
+            triage["follow_up_questions"] = list(dict.fromkeys(questions))[:3]
+            if triage["action"] == "ask" and not triage["follow_up_questions"]:
+                raise ReviewUnavailable("Unable to clarify this question. Please try again.")
             return triage
 
         try:
             return await self._cached_step("triage", conv_text, compute)
         except Exception:
-            logger.exception("pipeline.triage failed, defaulting to answer")
-            return {"action": "answer", "follow_up_questions": []}
+            raise ReviewUnavailable("Unable to assess this question safely. Please try again.") from None
 
     async def _detect_anatomy(self, conv_text: str) -> dict | None:
         async def compute():
@@ -339,7 +301,7 @@ class AgentPipeline:
             logger.exception("pipeline.tool_selection failed")
             return []
 
-        selected = [k for k in selection.get("selected_tools", []) if k in TOOL_REGISTRY]
+        selected = list(dict.fromkeys(k for k in selection.get("selected_tools", []) if isinstance(k, str) and k in TOOL_REGISTRY))[:2]
         if not selected:
             return []
 
@@ -353,7 +315,7 @@ class AgentPipeline:
 
         results = []
         for tool_key, variables in zip(selected, extractions):
-            if variables is None:
+            if variables is None or any(k not in variables for k in TOOL_REGISTRY[tool_key]["variables"]):
                 continue
             try:
                 result = TOOL_REGISTRY[tool_key]["function"](variables)
@@ -424,7 +386,7 @@ class AgentPipeline:
     async def _safety_check(self, question: str, answer: str, evidence: dict) -> str:
         articles = evidence.get("articles", [])[: self.max_evidence_articles]
         citation_lines = [
-            f"[{i}] {art.get('title', '')} ({art.get('year', '')})"
+            f"[{i}] {art.get('title', '')} ({art.get('year', '')}) {art.get('tldr', '')[:self.max_tldr_chars]}"
             for i, art in enumerate(articles, 1)
         ]
         citations_text = "\n".join(citation_lines) or "No citations available."
@@ -434,9 +396,11 @@ class AgentPipeline:
         try:
             raw = await self.llm.generate(user, system=SAFETY_SYSTEM)
             result = parse_json_response(raw)
-            if not result.get("is_safe", True) and result.get("revised_answer"):
-                logger.info("pipeline.safety revised answer, issues=%s", result.get("issues"))
-                return result["revised_answer"]
+            if result.get("is_safe") is True:
+                return answer
+            revised = result.get("revised_answer")
+            if result.get("is_safe") is False and isinstance(revised, str) and revised.strip():
+                return revised
         except Exception:
-            logger.exception("pipeline.safety failed, keeping original answer")
-        return answer
+            logger.warning("pipeline.safety unavailable")
+        raise ReviewUnavailable("I couldn’t complete the answer review. Please try again.")

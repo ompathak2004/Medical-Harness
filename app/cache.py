@@ -16,7 +16,9 @@ live only in process memory with a short TTL.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import json
 import time
 from collections import OrderedDict
 from typing import Any
@@ -24,11 +26,7 @@ from typing import Any
 
 def text_key(*parts: str) -> str:
     """Stable SHA-256 key from normalized text parts (PHI-free log-safe)."""
-    h = hashlib.sha256()
-    for p in parts:
-        h.update(" ".join(p.strip().lower().split()).encode())
-        h.update(b"\x1f")
-    return h.hexdigest()
+    return hashlib.sha256(json.dumps(parts, ensure_ascii=False).encode()).hexdigest()
 
 
 class TTLCache:
@@ -44,6 +42,25 @@ class TTLCache:
         self._data: OrderedDict[str, tuple[float, Any]] = OrderedDict()
         self.hits = 0
         self.misses = 0
+        self._pending: dict[str, asyncio.Task] = {}
+
+    async def get_or_compute(self, key, compute, cache_if=lambda value: True):
+        cached = self.get(key)
+        if cached is not None:
+            return cached
+        if key not in self._pending:
+            async def fill():
+                try:
+                    value = await compute()
+                    if cache_if(value):
+                        self.put(key, value)
+                    return value
+                finally:
+                    self._pending.pop(key, None)
+            task = asyncio.create_task(fill())
+            task.add_done_callback(lambda done: done.exception() if not done.cancelled() else None)
+            self._pending[key] = task
+        return await asyncio.shield(self._pending[key])
 
     def get(self, key: str) -> Any | None:
         entry = self._data.get(key)

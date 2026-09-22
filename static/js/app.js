@@ -1,25 +1,11 @@
-/**
- * app.js — MediSearch Agent frontend application logic.
- *
- * Owns: conversation state, SSE streaming consumption, all chat/hero/
- * emergency/tool-card/sources/citation rendering, the article detail
- * sidebar, the anatomy panel wiring, and theme toggling.
- *
- * No build step — this is loaded as a native ES module
- * (`<script type="module" src="/static/js/app.js">`).
- */
-
 import { initTheme, toggleTheme } from './theme.js';
 import {
   escapeHtml, escapeAttr, renderMarkdown, renderAnswerBody,
   copyToClipboard, rafThrottle, riskTone, TOOL_FIELD_LABELS,
   toolCardRows, toolHeadline,
 } from './dom-utils.js';
-import { isWebGLAvailable, REGIONS as ANATOMY_VIEWER_REGIONS, AnatomyViewer } from './anatomy-viewer.js';
-
-// ────────────────────────────────────────────────────────────────────────
-// DOM REFERENCES
-// ────────────────────────────────────────────────────────────────────────
+let ANATOMY_VIEWER_REGIONS = {};
+let anatomyModulePromise = null;
 
 const chatContainer = document.getElementById('chat-container');
 const chatScrollInner = document.getElementById('chat-scroll-inner');
@@ -50,15 +36,14 @@ const anatomyLayerBar = document.querySelector('.anatomy-layer-bar');
 const panelBackdrop = document.getElementById('panel-backdrop');
 const citationTooltip = document.getElementById('citation-tooltip');
 
-// ────────────────────────────────────────────────────────────────────────
-// STATE
-// ────────────────────────────────────────────────────────────────────────
-
 let conversationId = null;
 let conversation = [];
 let currentArticles = [];
 let currentAnatomyContext = null;
 let isStreaming = false;
+let activeRequest = null;
+let sessionVersion = 0;
+let activeAnswerInput = null;
 let pendingUserMessage = '';
 let msgCounter = 0;
 
@@ -69,10 +54,6 @@ let selectedStructure = null;
 
 const nextMsgId = () => 'm' + (++msgCounter);
 const reducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-// ────────────────────────────────────────────────────────────────────────
-// ICONS (shared inline SVG path snippets)
-// ────────────────────────────────────────────────────────────────────────
 
 const ICON = {
   pulse: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
@@ -94,10 +75,6 @@ function svg(inner, extra = '') {
   return `<svg viewBox="0 0 24 24" ${extra}>${inner}</svg>`;
 }
 
-// ────────────────────────────────────────────────────────────────────────
-// SCROLL HELPERS
-// ────────────────────────────────────────────────────────────────────────
-
 function isNearBottom() {
   return chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight < 140;
 }
@@ -110,36 +87,23 @@ function appendToChat(node) {
   if (stick) scheduleScroll();
 }
 
-// ────────────────────────────────────────────────────────────────────────
-// HERO (first-run welcome state)
-// ────────────────────────────────────────────────────────────────────────
-
 const EXAMPLE_PROMPTS = [
-  { emoji: '🤕', text: "I've had a headache for 3 days" },
-  { emoji: '💊', text: 'Is my blood pressure medication safe with ibuprofen?' },
-  { emoji: '⚖️', text: 'BMI check — I am 5\'8" and 170 lbs' },
-  { emoji: '❤️', text: 'What does a Wells score of 3 mean for DVT risk?' },
-  { emoji: '🦵', text: 'My left calf has been swollen and painful since yesterday' },
-  { emoji: '🩺', text: 'What are the treatment options for atrial fibrillation?' },
+  { label: 'Understand a symptom', text: "I've been getting headaches in the afternoon. What should I pay attention to?", icon: ICON.pulse },
+  { label: 'Check a medication', text: 'What should I know before taking ibuprofen?', icon: ICON.info },
+  { label: 'Make sense of a result', text: 'What does an elevated HbA1c result mean?', icon: ICON.check },
 ];
 
 function renderHero() {
-  const hero = document.createElement('div');
+  const hero = document.createElement('section');
   hero.className = 'hero';
   hero.id = 'hero';
   hero.innerHTML = `
-    <div class="hero-badge">${svg('<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>')}Evidence-based medical Q&amp;A</div>
-    <div class="hero-icon">${svg('<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>')}</div>
-    <h2>How can I help with your health question today?</h2>
-    <p class="hero-value-prop">Ask about symptoms, medications, or conditions. I retrieve peer-reviewed evidence, run validated clinical calculators when relevant, and always cite my sources.</p>
-    <div class="hero-disclaimer">
-      ${svg(ICON.warning)}
-      <span><strong>Informational only.</strong> This tool does not provide medical diagnoses and is not a substitute for professional medical advice. In an emergency, call your local emergency number right away.</span>
-    </div>
-    <div class="hero-examples-label">Try asking</div>
-    <div class="hero-chips">
-      ${EXAMPLE_PROMPTS.map(p => `<button type="button" class="hero-chip" data-action="hero-chip" data-value="${escapeAttr(p.text)}"><span class="chip-emoji">${p.emoji}</span>${escapeHtml(p.text)}</button>`).join('')}
-    </div>
+    <div class="hero-eyebrow"><span></span> A little clarity for your health</div>
+    <h2>Health questions.<br><em>Thoughtful answers.</em></h2>
+    <p class="hero-value-prop">Understand what you’re feeling, explore the evidence,<br class="desktop-break"> and feel more prepared for your next conversation with a doctor.</p>
+    <div class="hero-examples-label">A place to start</div>
+    <div class="hero-chips">${EXAMPLE_PROMPTS.map(p => `<button type="button" class="hero-chip" data-action="hero-chip" data-value="${escapeAttr(p.text)}"><span class="example-icon">${svg(p.icon)}</span><strong>${p.label}</strong><span>${escapeHtml(p.text)}</span><span class="example-arrow">↗</span></button>`).join('')}</div>
+    <div class="hero-footnote">Grounded in medical sources <span>·</span> Written for you</div>
   `;
   chatScrollInner.appendChild(hero);
 }
@@ -148,10 +112,6 @@ function removeHero() {
   const hero = document.getElementById('hero');
   if (hero) hero.remove();
 }
-
-// ────────────────────────────────────────────────────────────────────────
-// MESSAGE SHELL HELPERS
-// ────────────────────────────────────────────────────────────────────────
 
 function avatarHtml(role) {
   return `<div class="msg-avatar ${role === 'assistant' ? 'assistant-avatar' : 'user-avatar'}">${svg(role === 'assistant' ? ICON.pulse : ICON.user)}</div>`;
@@ -165,7 +125,6 @@ function addUserMessage(text) {
   return wrap;
 }
 
-/** Create the in-progress assistant message shell with an (initially empty) step indicator. */
 function createAssistantShell(msgId) {
   const wrap = document.createElement('div');
   wrap.className = 'msg-wrapper assistant';
@@ -175,26 +134,11 @@ function createAssistantShell(msgId) {
   return wrap;
 }
 
-/** Append a new active step, marking the previous one done (with a connector between them). */
 function appendStep(wrap, message) {
   const ctr = wrap.querySelector('.step-indicator');
-  const prevActive = ctr.querySelector('.step-item.active');
-  if (prevActive) {
-    prevActive.classList.replace('active', 'done');
-    prevActive.querySelector('.step-icon-wrap').innerHTML = `<span class="step-check">${svg(ICON.check)}</span>`;
-    const connector = document.createElement('div');
-    connector.className = 'step-connector';
-    ctr.appendChild(connector);
-  }
-  const step = document.createElement('div');
-  step.className = 'step-item active';
-  step.innerHTML = `<span class="step-icon-wrap"><span class="step-spinner"></span></span><span>${escapeHtml(message)}</span>`;
-  ctr.appendChild(step);
-  const stick = isNearBottom();
-  if (stick) scheduleScroll();
+  if (ctr) ctr.innerHTML = `<div class="step-item active" role="status"><span class="step-spinner"></span><span>${escapeHtml(message)}</span></div>`;
 }
 
-/** Live-update the streamed answer body with progressive markdown + a blinking cursor. */
 function updateStreamingBody(wrap, text) {
   const body = wrap.querySelector('.answer-body');
   body.innerHTML = renderAnswerBody(text, undefined, wrap.dataset.msgId) + '<span class="stream-cursor"></span>';
@@ -214,10 +158,6 @@ function systemErrorMessage(text, retryText) {
   appendToChat(wrap);
 }
 
-// ────────────────────────────────────────────────────────────────────────
-// EMERGENCY BANNER
-// ────────────────────────────────────────────────────────────────────────
-
 function renderEmergencyBanner(data) {
   const wrap = document.createElement('div');
   const guidance = (data.answer || '').trim();
@@ -233,10 +173,6 @@ function renderEmergencyBanner(data) {
     </div>`;
   appendToChat(wrap.firstElementChild);
 }
-
-// ────────────────────────────────────────────────────────────────────────
-// CLINICAL TOOL RESULT CARDS
-// ────────────────────────────────────────────────────────────────────────
 
 function renderToolCard(tr) {
   const tone = riskTone(tr);
@@ -273,10 +209,6 @@ function renderToolCard(tr) {
   </div>`;
 }
 
-// ────────────────────────────────────────────────────────────────────────
-// SOURCES GRID
-// ────────────────────────────────────────────────────────────────────────
-
 function renderSourcesGrid(articles, msgId) {
   if (!articles.length) return '';
   const cards = articles.map((art, i) => {
@@ -290,25 +222,25 @@ function renderSourcesGrid(articles, msgId) {
       </span>
     </button>`;
   }).join('');
-  return `<div class="sources-section"><div class="sources-label">Sources</div><div class="sources-grid">${cards}</div></div>`;
+  return `<details class="sources-section"><summary class="sources-label">${articles.length} medical sources <span>View evidence ↗</span></summary><div class="sources-grid">${cards}</div></details>`;
 }
-
-// ────────────────────────────────────────────────────────────────────────
-// ANATOMY TOGGLE BUTTON (embedded in a chat message)
-// ────────────────────────────────────────────────────────────────────────
 
 function anatomyToggleButtonHtml(label = 'View on Body Map') {
   return `<button type="button" class="anatomy-toggle-btn" data-action="open-anatomy">${svg(ICON.body)}${escapeHtml(label)}</button>`;
 }
 
-/** Text-only follow-up questions list (from a type=="follow_up" result); each item is tappable and submits itself as the next message. */
 function renderFollowUpQuestionsList(questions) {
-  return `<ul class="followup-questions-list">${questions.map(q =>
-    `<li><button type="button" class="followup-question-btn" data-action="followup-question" data-value="${escapeAttr(q)}">${escapeHtml(q)}</button></li>`
-  ).join('')}</ul>`;
+  return `<form class="clarification-form">
+    <div class="clarification-heading"><strong>A little more context</strong><span class="answer-progress" aria-live="polite">0 of ${questions.length} answered</span></div>
+    ${questions.map((q, i) => `<details class="question-item" ${i === 0 ? 'open' : ''}>
+      <summary><span class="question-number">${i + 1}</span><span>${escapeHtml(q)}</span><span class="question-state">+</span></summary>
+      <label class="sr-only" for="answer-${msgCounter}-${i}">${escapeHtml(q)}</label>
+      <textarea id="answer-${msgCounter}-${i}" name="answer-${i}" data-question="${escapeAttr(q)}" rows="2" maxlength="1800" placeholder="Your answer, or ‘not sure’" required></textarea>
+    </details>`).join('')}
+    <div class="clarification-footer"><span>You can edit each answer before sending.</span><button type="submit" class="submit-answers" disabled>Submit answers <span aria-hidden="true">↗</span></button></div>
+  </form>`;
 }
 
-/** MediSearch "you might also ask" suggestion chips, shown after an answer. */
 function renderFollowupChips(followups) {
   const sec = document.createElement('div');
   sec.className = 'followup-section';
@@ -325,42 +257,34 @@ function renderMsgActions(msgId) {
   </div>`;
 }
 
-// ────────────────────────────────────────────────────────────────────────
-// PER-MESSAGE STATE (articles / plain-text answers, keyed by msgId)
-// ────────────────────────────────────────────────────────────────────────
-
 const messageArticles = new Map();
 const messageAnswerText = new Map();
 
-// ────────────────────────────────────────────────────────────────────────
-// FINALIZE A RESULT INTO THE ASSISTANT MESSAGE SHELL
-// ────────────────────────────────────────────────────────────────────────
-
 function finalizeFollowUp(wrap, data, msgId) {
-  if (data.anatomy_context?.has_anatomy) currentAnatomyContext = data.anatomy_context;
+  currentAnatomyContext = data.anatomy_context?.has_anatomy ? data.anatomy_context : null;
   const msgEl = wrap.querySelector('.msg.assistant');
   let html = '';
   if (data.preliminary_info) {
     html += `<div class="preliminary-card">
       ${svg(ICON.info)}
       <div class="preliminary-card-body">
-        <div class="preliminary-card-label">While you answer…</div>
+        <div class="preliminary-card-label">Before we continue</div>
         <div class="preliminary-card-text">${renderMarkdown(data.preliminary_info)}</div>
       </div>
     </div>`;
   }
-  html += `<div class="followup-questions-label">To give you more specific advice, I need a few more details:</div>`;
+
   html += renderFollowUpQuestionsList(data.follow_up_questions || []);
   if (currentAnatomyContext) html += anatomyToggleButtonHtml('Show on Body Map');
   msgEl.innerHTML = html;
-  if (currentAnatomyContext) openAnatomyPanel();
+
 }
 
 function finalizeAnswer(wrap, data, msgId) {
   currentArticles = data.articles || [];
   messageArticles.set(msgId, currentArticles);
   messageAnswerText.set(msgId, data.answer || '');
-  if (data.anatomy_context?.has_anatomy) currentAnatomyContext = data.anatomy_context;
+  currentAnatomyContext = data.anatomy_context?.has_anatomy ? data.anatomy_context : null;
 
   const msgEl = wrap.querySelector('.msg.assistant');
   let html = '';
@@ -382,17 +306,13 @@ function handleResult(wrap, msgId, data) {
   } else if (data.type === 'emergency') {
     wrap.remove();
     renderEmergencyBanner(data);
-    if (data.anatomy_context?.has_anatomy) currentAnatomyContext = data.anatomy_context;
+    currentAnatomyContext = data.anatomy_context?.has_anatomy ? data.anatomy_context : null;
     conversation.push(((data.emergency_message || '') + (data.answer ? '\n\n' + data.answer : '')).trim());
   } else {
     finalizeAnswer(wrap, data, msgId);
     conversation.push(data.answer || '');
   }
 }
-
-// ────────────────────────────────────────────────────────────────────────
-// CITATION TOOLTIP + SCROLL-TO-SOURCE
-// ────────────────────────────────────────────────────────────────────────
 
 function showCitationTooltip(refEl) {
   const msgId = refEl.dataset.msgId;
@@ -422,6 +342,8 @@ function scrollToSourceCard(msgId, idx) {
   const wrap = chatScrollInner.querySelector(`[data-msg-id="${msgId}"]`);
   const card = wrap?.querySelector(`.source-card[data-idx="${idx}"]`);
   if (!card) return;
+  const sourceDetails = card.closest('details');
+  if (sourceDetails) sourceDetails.open = true;
   card.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'center' });
   card.classList.remove('highlight-pulse');
   requestAnimationFrame(() => card.classList.add('highlight-pulse'));
@@ -431,10 +353,6 @@ function pulseCitationRef(refEl) {
   refEl.classList.remove('highlight-pulse');
   requestAnimationFrame(() => refEl.classList.add('highlight-pulse'));
 }
-
-// ────────────────────────────────────────────────────────────────────────
-// ARTICLE DETAIL SIDEBAR
-// ────────────────────────────────────────────────────────────────────────
 
 function openArticleSidebar(msgId, idx) {
   const articles = messageArticles.get(msgId) || [];
@@ -449,21 +367,20 @@ function openArticleSidebar(msgId, idx) {
   if (art.authors?.length) html += `<div class="sidebar-section"><div class="sidebar-section-label">Authors</div><div class="sidebar-authors">${escapeHtml(art.authors.join(', '))}</div></div>`;
   if (art.url) html += `<a class="sidebar-link" href="${escapeAttr(art.url)}" target="_blank" rel="noopener noreferrer">${svg(ICON.link)}View source</a>`;
   sidebarContent.innerHTML = html;
+  articleSidebar.inert = false;
   articleSidebar.classList.add('open');
+  articleSidebarClose.focus({ preventScroll: true });
   articleSidebar.setAttribute('aria-hidden', 'false');
   showBackdropIfMobile();
   hideCitationTooltip();
 }
 
 function closeArticleSidebar() {
+  articleSidebar.inert = true;
   articleSidebar.classList.remove('open');
   articleSidebar.setAttribute('aria-hidden', 'true');
   hideBackdropIfNothingOpen();
 }
-
-// ────────────────────────────────────────────────────────────────────────
-// MOBILE BACKDROP (shared by article sidebar + anatomy panel bottom-sheet)
-// ────────────────────────────────────────────────────────────────────────
 
 function showBackdropIfMobile() {
   if (window.innerWidth > 768) return;
@@ -475,33 +392,22 @@ function hideBackdropIfNothingOpen() {
   }
 }
 
-// ────────────────────────────────────────────────────────────────────────
-// ANATOMY PANEL
-// ────────────────────────────────────────────────────────────────────────
-
-function initAnatomyViewerIfNeeded() {
+async function initAnatomyViewerIfNeeded() {
   if (anatomyViewer || anatomyInitFailed) return;
-  if (!isWebGLAvailable()) {
-    anatomyInitFailed = true;
-    anatomyLoading.classList.add('hidden');
-    anatomyFallback.classList.add('visible');
-    return;
-  }
   try {
-    const accent = getComputedStyle(document.documentElement).getPropertyValue('--brand').trim() || '#22d3ee';
+    anatomyModulePromise ||= import('./anatomy-viewer.js');
+    const { isWebGLAvailable, REGIONS, AnatomyViewer } = await anatomyModulePromise;
+    ANATOMY_VIEWER_REGIONS = REGIONS;
+    if (anatomyViewer) return;
+    if (!isWebGLAvailable()) throw new Error('WebGL unavailable');
+    const accent = getComputedStyle(document.documentElement).getPropertyValue('--brand').trim();
     anatomyViewer = new AnatomyViewer(anatomyCanvas, { accentColor: accent, reducedMotion });
     anatomyViewer.onHover(onAnatomyHover);
     anatomyViewer.onSelect(onAnatomySelect);
-    // Assets stream in progressively — hide the spinner once skin+skeleton land.
-    anatomyViewer.ready
-      .then(() => anatomyLoading.classList.add('hidden'))
-      .catch(err => {
-        console.error('AnatomyViewer assets failed to load', err);
-        anatomyLoading.classList.add('hidden');
-        anatomyFallback.classList.add('visible');
-      });
-  } catch (err) {
-    console.error('AnatomyViewer failed to initialize', err);
+    await anatomyViewer.ready;
+    anatomyLoading.classList.add('hidden');
+    anatomyViewer.setVisible(anatomyPanel.classList.contains('open'));
+  } catch {
     anatomyInitFailed = true;
     anatomyLoading.classList.add('hidden');
     anatomyFallback.classList.add('visible');
@@ -575,23 +481,27 @@ function confirmAnatomyRegion() {
   const regionLabel = ANATOMY_VIEWER_REGIONS[selectedRegionId]?.label || selectedRegionId;
   closeAnatomyPanel();
   if (selectedStructure?.name) {
-    submitMessage(`The issue is in my ${regionLabel}, specifically the ${selectedStructure.name}.`);
+    insertAnatomyText(`The issue is in my ${regionLabel}, specifically the ${selectedStructure.name}.`);
   } else {
-    submitMessage(`The issue is in my ${regionLabel}.`);
+    insertAnatomyText(`The issue is in my ${regionLabel}.`);
   }
 }
 
 function confirmAnatomySubpart(regionLabel, subPart) {
   closeAnatomyPanel();
-  submitMessage(`The issue is in my ${regionLabel}, specifically the ${subPart}.`);
+  insertAnatomyText(`The issue is in my ${regionLabel}, specifically the ${subPart}.`);
 }
 
-function openAnatomyPanel() {
+async function openAnatomyPanel() {
   closeArticleSidebar();
   anatomyPanel.classList.add('open');
   anatomyPanel.setAttribute('aria-hidden', 'false');
   showBackdropIfMobile();
-  initAnatomyViewerIfNeeded();
+  anatomyPanel.inert = false;
+  anatomyPanelClose.focus({ preventScroll: true });
+  await initAnatomyViewerIfNeeded();
+  if (!anatomyPanel.classList.contains('open')) return;
+  anatomyViewer?.setVisible(true);
 
   if (anatomyViewer && currentAnatomyContext?.regions) {
     anatomyViewer.highlight(currentAnatomyContext.regions.map(r => r.id));
@@ -605,6 +515,8 @@ function openAnatomyPanel() {
 }
 
 function closeAnatomyPanel() {
+  anatomyViewer?.setVisible(false);
+  anatomyPanel.inert = true;
   anatomyPanel.classList.remove('open');
   anatomyPanel.setAttribute('aria-hidden', 'true');
   hideBackdropIfNothingOpen();
@@ -615,18 +527,17 @@ function setAnatomyLayer(layer) {
   anatomyViewer?.setLayer(layer);
 }
 
-// ────────────────────────────────────────────────────────────────────────
-// STATUS PILL (online/offline)
-// ────────────────────────────────────────────────────────────────────────
-
 function setOnlineStatus(online) {
   statusDot.classList.toggle('offline', !online);
   statusLabel.textContent = online ? 'Online' : 'Connection issue';
 }
 
-// ────────────────────────────────────────────────────────────────────────
-// SEND / STREAM
-// ────────────────────────────────────────────────────────────────────────
+function insertAnatomyText(text) {
+  const input = activeAnswerInput?.isConnected && !activeAnswerInput.disabled ? activeAnswerInput : userInput;
+  input.value = (input.value.trim() + ' ' + text).trim();
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.focus();
+}
 
 function setInputDisabled(disabled) {
   isStreaming = disabled;
@@ -634,110 +545,133 @@ function setInputDisabled(disabled) {
   sendBtn.disabled = disabled;
   inputArea.classList.toggle('disabled', disabled);
   sendBtn.classList.toggle('loading', disabled);
-}
-
-/** Public entry point used by hero chips, followups, anatomy confirm, retry, etc. */
-function submitMessage(text) {
-  sendMessage(text);
+  document.getElementById('stop-btn').hidden = !disabled;
+  document.querySelectorAll('.clarification-form:not([data-submitted])').forEach(form => {
+    form.querySelectorAll('textarea').forEach(input => input.disabled = disabled);
+    updateClarification(form);
+  });
 }
 
 async function sendMessage(text) {
   const msg = (text ?? userInput.value).trim();
-  if (!msg || isStreaming) return;
-
+  if (!msg || isStreaming) return false;
+  if (msg.length > 8000) { systemErrorMessage('Please keep your message under 8,000 characters.'); return false; }
   removeHero();
-  document.querySelectorAll('.followup-section').forEach(el => el.remove());
+  closeAnatomyPanel();
+  document.querySelectorAll('.followup-section, .msg.system').forEach(el => el.remove());
   userInput.value = '';
   userInput.style.height = 'auto';
-  addUserMessage(msg);
+  const userNode = addUserMessage(msg);
+  const before = [...conversation];
+  const version = sessionVersion;
   conversation.push(msg);
   setInputDisabled(true);
-
+  const controller = new AbortController();
+  activeRequest = controller;
+  const timeout = setTimeout(() => controller.abort('timeout'), 160000);
   const msgId = nextMsgId();
   const wrap = createAssistantShell(msgId);
-  let streamedText = '';
-  let gotResult = false;
-
+  appendStep(wrap, 'Understanding your question…');
+  let reader;
+  let succeeded = false;
   try {
     const resp = await fetch('/api/chat/stream', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal,
       body: JSON.stringify({ conversation, conversation_id: conversationId }),
     });
-
     if (!resp.ok || !resp.body) {
-      let detail = resp.statusText;
-      try { detail = (await resp.json()).detail || detail; } catch { /* not JSON */ }
-      wrap.remove();
-      conversation.pop();
-      systemErrorMessage(detail || 'The server could not process that request.', msg);
-      setInputDisabled(false);
-      return;
+      let detail = 'The service is unavailable. Please try again.';
+      try { const body = await resp.json(); if (typeof body.detail === 'string') detail = body.detail; } catch {}
+      throw new Error(detail);
     }
-
     setOnlineStatus(true);
-    const reader = resp.body.getReader();
+    reader = resp.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
-
-    while (true) {
+    while (!succeeded) {
       const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
+      buffer += decoder.decode(value || new Uint8Array(), { stream: !done }).replace(/\r/g, '');
       const parts = buffer.split('\n\n');
       buffer = parts.pop();
+      if (done && buffer.trim()) parts.push(buffer);
       for (const part of parts) {
-        if (!part.trim()) continue;
-        let eventType = '', eventData = '';
+        let eventType = '';
+        const lines = [];
         for (const line of part.split('\n')) {
-          if (line.startsWith('event: ')) eventType = line.slice(7);
-          else if (line.startsWith('data: ')) eventData = line.slice(6);
+          if (line.startsWith('event:')) eventType = line.slice(6).trim();
+          else if (line.startsWith('data:')) lines.push(line.slice(5).trimStart());
         }
-        if (!eventType || !eventData) continue;
-        let data;
-        try { data = JSON.parse(eventData); } catch { continue; }
-
-        if (eventType === 'meta') {
-          conversationId = data.conversation_id;
-        } else if (eventType === 'step') {
-          appendStep(wrap, data.message);
-        } else if (eventType === 'answer_chunk') {
-          streamedText += data.text;
-          updateStreamingBody(wrap, streamedText);
-        } else if (eventType === 'result') {
-          gotResult = true;
-          handleResult(wrap, msgId, data);
-        } else if (eventType === 'error') {
-          gotResult = true;
-          wrap.remove();
-          conversation.pop();
-          systemErrorMessage(data.detail || 'Unknown error.', msg);
-        }
+        if (!eventType || !lines.length) continue;
+        const data = JSON.parse(lines.join('\n'));
+        if (version !== sessionVersion) return false;
+        if (eventType === 'meta') conversationId = data.conversation_id;
+        if (eventType === 'step') appendStep(wrap, data.message);
+        if (eventType === 'error') throw new Error(data.detail || 'Please try again.');
+        if (eventType === 'result') { handleResult(wrap, msgId, data); succeeded = true; break; }
       }
+      if (done) break;
     }
-
-    if (!gotResult) {
-      // Stream ended without a result/error event (unexpected server-side abort).
-      wrap.remove();
-      conversation.pop();
-      systemErrorMessage('The response stream ended unexpectedly.', msg);
-    }
-  } catch (e) {
+    if (!succeeded) throw new Error('The connection ended before your answer was ready. Please try again.');
+    return true;
+  } catch (error) {
+    if (version !== sessionVersion) return false;
     wrap.remove();
-    conversation.pop();
-    setOnlineStatus(false);
-    systemErrorMessage('Network error: ' + (e?.message || 'could not reach the server.'), msg);
+    userNode.remove();
+    conversation = before;
+    userInput.value = msg;
+    const detail = controller.signal.aborted
+      ? (controller.signal.reason === 'timeout' ? 'This is taking too long. Your question has been kept below.' : 'Response stopped. Your question has been kept below.')
+      : error.message;
+    systemErrorMessage(detail, msg);
+    return false;
+  } finally {
+    clearTimeout(timeout);
+    await reader?.cancel().catch(() => {});
+    if (version === sessionVersion) { activeRequest = null; setInputDisabled(false); }
   }
-
-  setInputDisabled(false);
-  if (!isStreaming) userInput.focus({ preventScroll: true });
 }
 
-// ────────────────────────────────────────────────────────────────────────
-// NEW CONVERSATION
-// ────────────────────────────────────────────────────────────────────────
+function updateClarification(form) {
+  const inputs = [...form.querySelectorAll('textarea')];
+  const count = inputs.filter(input => input.value.trim()).length;
+  form.querySelector('.answer-progress').textContent = `${count} of ${inputs.length} answered`;
+  inputs.forEach(input => {
+    const item = input.closest('details');
+    item.classList.toggle('answered', Boolean(input.value.trim()));
+    item.querySelector('.question-state').textContent = input.value.trim() ? '✓' : '+';
+  });
+  form.querySelector('button[type="submit"]').disabled = isStreaming || count !== inputs.length;
+}
+
+chatContainer.addEventListener('input', event => {
+  const form = event.target.closest('.clarification-form');
+  if (form) updateClarification(form);
+});
+chatContainer.addEventListener('focusin', event => {
+  if (event.target.matches('.clarification-form textarea')) activeAnswerInput = event.target;
+});
+chatContainer.addEventListener('submit', async event => {
+  const form = event.target.closest('.clarification-form');
+  if (!form) return;
+  event.preventDefault();
+  const inputs = [...form.querySelectorAll('textarea')];
+  if (isStreaming || inputs.some(input => !input.value.trim())) return;
+  const text = inputs.map(input => `${input.dataset.question}\n${input.value.trim()}`).join('\n\n');
+  const submitted = await sendMessage(text);
+  if (submitted) {
+    form.dataset.submitted = 'true';
+    form.querySelectorAll('textarea, button').forEach(input => input.disabled = true);
+    form.querySelector('button[type="submit"]').textContent = 'Answers sent ✓';
+    form.querySelectorAll('details').forEach(item => item.open = false);
+  }
+});
 
 function startNewConversation() {
+  sessionVersion++;
+  activeRequest?.abort();
+  activeRequest = null;
+  activeAnswerInput = null;
+  setInputDisabled(false);
   conversationId = null;
   conversation = [];
   currentArticles = [];
@@ -755,10 +689,6 @@ function startNewConversation() {
   userInput.focus({ preventScroll: true });
 }
 
-// ────────────────────────────────────────────────────────────────────────
-// COPY-ANSWER ACTION
-// ────────────────────────────────────────────────────────────────────────
-
 async function handleCopyAnswer(btn) {
   const msgId = btn.dataset.msgId;
   const text = messageAnswerText.get(msgId) || '';
@@ -771,16 +701,12 @@ async function handleCopyAnswer(btn) {
   }
 }
 
-// ────────────────────────────────────────────────────────────────────────
-// INPUT BEHAVIOR (auto-resize + Enter-to-send)
-// ────────────────────────────────────────────────────────────────────────
-
 userInput.addEventListener('input', () => {
   userInput.style.height = 'auto';
   userInput.style.height = Math.min(userInput.scrollHeight, 140) + 'px';
 });
 userInput.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey) {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
     e.preventDefault();
     sendMessage();
   }
@@ -789,19 +715,11 @@ sendBtn.addEventListener('click', () => sendMessage());
 newConvoBtn?.addEventListener('click', startNewConversation);
 anatomyHeaderBtn?.addEventListener('click', openAnatomyPanel);
 
-// ────────────────────────────────────────────────────────────────────────
-// THEME TOGGLE
-// ────────────────────────────────────────────────────────────────────────
-
 themeToggleBtn?.addEventListener('click', () => {
   toggleTheme();
   const accent = getComputedStyle(document.documentElement).getPropertyValue('--brand').trim();
   if (accent) anatomyViewer?.setAccentColor(accent);
 });
-
-// ────────────────────────────────────────────────────────────────────────
-// PANEL CLOSE / BACKDROP
-// ────────────────────────────────────────────────────────────────────────
 
 articleSidebarClose?.addEventListener('click', closeArticleSidebar);
 anatomyPanelClose?.addEventListener('click', closeAnatomyPanel);
@@ -810,8 +728,6 @@ panelBackdrop?.addEventListener('click', () => { closeArticleSidebar(); closeAna
 anatomyLayerBar?.querySelectorAll('.layer-btn').forEach(btn => {
   btn.addEventListener('click', () => setAnatomyLayer(btn.dataset.layer));
 });
-
-// ── Anatomy structure search ─────────────────────────────────────────────
 const anatomySearchInput = document.getElementById('anatomy-search-input');
 const anatomySearchResults = document.getElementById('anatomy-search-results');
 
@@ -844,7 +760,6 @@ anatomySearchResults?.addEventListener('click', e => {
   const item = e.target.closest('.anatomy-search-item');
   if (!item || !anatomyViewer) return;
   anatomyViewer.selectStructure(item.dataset.structureId).then(() => {
-    // Sync the layer bar with the layer selectStructure may have switched to.
     const active = anatomyViewer?.activeLayer;
     if (active) {
       anatomyLayerBar?.querySelectorAll('.layer-btn').forEach(b =>
@@ -865,10 +780,6 @@ document.querySelectorAll('.view-btn[data-view]').forEach(btn => {
 });
 document.getElementById('anatomy-reset-btn')?.addEventListener('click', () => anatomyViewer?.resetCamera());
 
-// ────────────────────────────────────────────────────────────────────────
-// EVENT DELEGATION — chat container (citation refs, source cards, chips, etc.)
-// ────────────────────────────────────────────────────────────────────────
-
 chatContainer.addEventListener('click', e => {
   const el = e.target.closest('[data-action]');
   if (!el) return;
@@ -876,7 +787,9 @@ chatContainer.addEventListener('click', e => {
 
   switch (action) {
     case 'hero-chip':
-      sendMessage(el.dataset.value);
+      userInput.value = el.dataset.value;
+      userInput.focus();
+      userInput.dispatchEvent(new Event('input'));
       break;
     case 'citation-ref':
       pulseCitationRef(el);
@@ -885,7 +798,6 @@ chatContainer.addEventListener('click', e => {
     case 'open-source':
       openArticleSidebar(el.dataset.msgId, parseInt(el.dataset.idx, 10));
       break;
-    case 'followup-question':
     case 'followup-chip':
     case 'retry':
       sendMessage(el.dataset.value);
@@ -910,8 +822,6 @@ chatContainer.addEventListener('mouseout', e => {
   if (el) hideCitationTooltip();
 });
 chatContainer.addEventListener('scroll', hideCitationTooltip);
-
-// Anatomy info panel delegation (sub-part chips + confirm button)
 anatomyInfoPanel.addEventListener('click', e => {
   const el = e.target.closest('[data-action]');
   if (!el) return;
@@ -919,13 +829,15 @@ anatomyInfoPanel.addEventListener('click', e => {
   else if (el.dataset.action === 'anatomy-subpart') confirmAnatomySubpart(el.dataset.regionLabel, el.dataset.subpart);
 });
 
-// ────────────────────────────────────────────────────────────────────────
-// BOOTSTRAP
-// ────────────────────────────────────────────────────────────────────────
-
 initTheme();
 renderHero();
 userInput.focus({ preventScroll: true });
-
-// Confirm backend reachability without blocking the UI.
 fetch('/api/health').then(r => setOnlineStatus(r.ok)).catch(() => setOnlineStatus(false));
+
+document.getElementById('stop-btn').addEventListener('click', () => activeRequest?.abort());
+document.getElementById('anatomy-zoom-in').addEventListener('click', () => anatomyViewer?.zoom(0.8));
+document.getElementById('anatomy-zoom-out').addEventListener('click', () => anatomyViewer?.zoom(1.25));
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') { closeArticleSidebar(); closeAnatomyPanel(); userInput.focus(); }
+});
+document.addEventListener('visibilitychange', () => anatomyViewer?.setVisible(!document.hidden && anatomyPanel.classList.contains('open')));

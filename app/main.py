@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import asyncio
+import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -45,11 +47,13 @@ def create_app() -> FastAPI:
             prompt_cache_key=settings.cerebras_prompt_cache_key,
         )
         evidence = EvidenceRetriever(api_key=settings.medisearch_api_key)
+        app.state.request_slots = asyncio.Semaphore(settings.max_concurrent_requests)
         app.state.llm = llm
         app.state.pipeline = AgentPipeline(llm=llm, evidence=evidence)
         logger.info("startup complete model=%s version=%s", settings.cerebras_model, __version__)
         yield
         await llm.aclose()
+        await evidence.aclose()
 
     app = FastAPI(title="MediSearch Agent", version=__version__, lifespan=lifespan)
 
@@ -65,6 +69,23 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "POST"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def response_security(request: Request, call_next):
+        session = request.cookies.get("medisearch_session", "")
+        valid_session = len(session) == 64 and all(c in "0123456789abcdef" for c in session)
+        request.state.cache_scope = session if valid_session else secrets.token_hex(32)
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        if request.url.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-store"
+        if not valid_session:
+            response.set_cookie("medisearch_session", request.state.cache_scope, httponly=True,
+                                secure=request.url.scheme == "https", samesite="strict")
+        return response
 
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception):

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="theme-color" content="#ffffff">
   <meta name="description" content="MediSearch Agent — evidence-based medical Q&A with cited sources, clinical calculators, and an interactive 3D body map.">
-  <title>MediSearch Agent — Evidence-Based Medical QA</title>
+  <title>MediSearch — A clearer next step</title>
 
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%230891b2'/%3E%3Cpath d='M22 12h-4l-3 9L9 3l-3 9H2' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 
@@ -26,6 +26,7 @@
   <link rel="stylesheet" href="/static/css/layout.css">
   <link rel="stylesheet" href="/static/css/components.css">
   <link rel="stylesheet" href="/static/css/anatomy.css">
+  <link rel="stylesheet" href="/static/css/product.css">
 </head>
 <body>
 
@@ -34,14 +35,14 @@
     <svg viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
   </div>
   <div class="header-text">
-    <h1>MediSearch Agent</h1>
-    <div class="subtitle">Evidence-based Medical QA</div>
+    <h1>MediSearch<span class="brand-period">.</span></h1>
+    <div class="subtitle">Your health, better understood</div>
   </div>
 
   <div class="header-status">
     <button type="button" class="new-convo-btn" id="new-convo-btn" title="Start a new conversation">
       <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 2.64-6.36"/><polyline points="3 4 3 12 11 12"/></svg>
-      New conversation
+      New question
     </button>
     <button type="button" class="icon-btn" id="anatomy-header-btn" title="Open 3D body map" aria-label="Open 3D body map">
       <svg viewBox="0 0 24 24"><path d="M12 2a3 3 0 0 0-3 3v1H7a1 1 0 0 0-1 1v3a4 4 0 0 0 1 2.65V20a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-7.35A4 4 0 0 0 18 10V7a1 1 0 0 0-1-1h-2V5a3 3 0 0 0-3-3z"/></svg>
@@ -52,29 +53,32 @@
     </button>
     <span class="status-pill">
       <span class="status-dot" id="status-dot"></span>
-      <span class="status-label" id="status-label">Online</span>
+      <span class="status-label" id="status-label">Connecting</span>
     </span>
   </div>
 </header>
 
+<div class="workspace-label"><span>YOUR HEALTH COMPANION</span><span>Ask. Understand. Take the next step.</span></div>
 <div class="main-layout">
   <!-- Chat Area -->
   <div class="chat-area">
-    <div id="chat-container">
+    <main id="chat-container" aria-label="Health conversation">
       <div class="chat-scroll-inner" id="chat-scroll-inner"></div>
-    </div>
+    </main>
 
     <div class="input-area-wrapper">
       <div class="input-inner">
+        <div class="composer-label">What’s on your mind?</div>
         <div id="input-area">
-          <textarea id="user-input" placeholder="Ask a medical question…" rows="1" aria-label="Ask a medical question"></textarea>
+          <textarea id="user-input" placeholder="Describe a symptom or ask a health question…" rows="2" maxlength="8000" aria-label="Ask a medical question"></textarea>
+          <button type="button" id="stop-btn" class="stop-btn" hidden>Stop</button>
           <button type="button" id="send-btn" aria-label="Send message">
             <svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-            <span class="btn-spinner" aria-hidden="true"></span>
+            <span class="btn-spinner" aria-hidden="true" inert></span>
           </button>
         </div>
         <div class="input-meta-row">
-          <div class="disclaimer-footer">Informational only — not a substitute for professional medical advice.</div>
+          <div class="disclaimer-footer">Medical information, not a diagnosis. For emergencies, contact local emergency services.</div>
           <div class="input-hint"><kbd>Enter</kbd> to send · <kbd>Shift+Enter</kbd> for new line</div>
         </div>
       </div>
@@ -82,7 +86,7 @@
   </div>
 
   <!-- Article detail sidebar (slide-in) -->
-  <aside class="article-sidebar" id="article-sidebar" aria-hidden="true">
+  <aside class="article-sidebar" id="article-sidebar" aria-hidden="true" inert>
     <div class="sidebar-header">
       <span class="sidebar-title">Source Article</span>
       <button type="button" class="panel-close" id="article-sidebar-close" aria-label="Close source panel">
@@ -93,7 +97,7 @@
   </aside>
 
   <!-- Anatomy body map panel (right-hand drawer / mobile bottom-sheet) -->
-  <aside class="anatomy-panel" id="anatomy-panel" aria-hidden="true">
+  <aside class="anatomy-panel" id="anatomy-panel" aria-hidden="true" inert>
     <div class="drawer-handle"></div>
 
     <div class="anatomy-topbar">
@@ -126,6 +130,8 @@
     </div>
 
     <div class="anatomy-view-bar">
+      <button type="button" class="view-btn" id="anatomy-zoom-in" aria-label="Zoom in">+</button>
+      <button type="button" class="view-btn" id="anatomy-zoom-out" aria-label="Zoom out">−</button>
       <span class="view-label">View</span>
       <button type="button" class="view-btn" data-view="front">Front</button>
       <button type="button" class="view-btn" data-view="back">Back</button>
@@ -138,7 +144,7 @@
     </div>
 
     <div class="anatomy-canvas-wrap" id="anatomy-canvas">
-      <div class="anatomy-canvas-hint">Drag to rotate · Scroll to zoom</div>
+      <div class="anatomy-canvas-hint">Drag to rotate · Pinch or scroll to zoom</div>
       <div class="anatomy-hover-label" id="anatomy-hover-label"></div>
       <div class="anatomy-loading" id="anatomy-loading">
         <span class="spin-ring"></span>
@@ -159,7 +165,7 @@
     </div>
 
     <div class="anatomy-attribution">
-      3D anatomy: <a href="https://lifesciencedb.jp/bp3d/" target="_blank" rel="noopener">BodyParts3D</a>,
+      Educational adult reference model. Not a diagnostic image.<br>3D anatomy: <a href="https://lifesciencedb.jp/bp3d/" target="_blank" rel="noopener">BodyParts3D</a>,
       © The Database Center for Life Science, licensed under
       <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC-BY-4.0</a>
     </div>

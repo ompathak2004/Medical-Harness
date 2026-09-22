@@ -55,8 +55,10 @@ def test_health(client):
     assert resp.json()["status"] == "ok"
 
 
-def test_metrics_numbers_only(client):
-    resp = client.get("/api/metrics")
+def test_metrics_numbers_only(client, monkeypatch):
+    from app.config import get_settings
+    monkeypatch.setattr(get_settings(), "metrics_token", "metrics-test")
+    resp = client.get("/api/metrics", headers={"Authorization": "Bearer metrics-test"})
     assert resp.status_code == 200
     body = resp.json()
     assert set(body) == {"llm", "step_cache", "evidence_cache"}
@@ -123,3 +125,22 @@ def test_chat_stream_sse_events(client):
             data_line = [l for l in block.split("\n") if l.startswith("data:")][0]
             payload = json.loads(data_line[5:])
             assert payload["type"] == "answer"
+
+
+def test_metrics_private_by_default(client):
+    assert client.get("/api/metrics").status_code == 404
+
+
+def test_health_response_does_not_allow_storage(client):
+    response = client.get("/api/health")
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert "medisearch_session" in client.cookies
+
+
+def test_spoofed_forwarded_header_does_not_reset_rate_limit(client, monkeypatch):
+    from app.config import get_settings
+    for i in range(get_settings().rate_limit_requests):
+        response = client.post("/api/chat", json={"conversation": ["Question"]}, headers={"X-Forwarded-For": f"192.0.2.{i}"})
+        assert response.status_code == 200
+    assert client.post("/api/chat", json={"conversation": ["Question"]}, headers={"X-Forwarded-For": "203.0.113.1"}).status_code == 429

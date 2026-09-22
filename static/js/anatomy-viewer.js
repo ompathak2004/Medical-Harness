@@ -588,6 +588,19 @@ export class AnatomyViewer {
     this._animateCamera(t.clone().add(dir.multiplyScalar(d)), t);
   }
 
+  zoom(factor) {
+    const offset = this._camera.position.clone().sub(this._controls.target);
+    const distance = THREE.MathUtils.clamp(offset.length() * factor, this._controls.minDistance, this._controls.maxDistance);
+    this._camAnim = null;
+    this._camera.position.copy(this._controls.target).add(offset.setLength(distance));
+    this._controls.update();
+  }
+
+  setVisible(visible) {
+    this._renderer.setAnimationLoop(visible ? this._animate : null);
+    if (visible) { this._clock.getDelta(); this.resize(); }
+  }
+
   resetCamera() {
     this.highlight([]);
     if (this._selected) {

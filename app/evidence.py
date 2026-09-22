@@ -1,58 +1,54 @@
-"""MediSearch evidence retriever — peer-reviewed articles + medical summaries.
-
-The medisearch-client SDK is synchronous; callers should run ``search`` in a
-thread (``asyncio.to_thread``) from async code.
-"""
-
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 
-from medisearch_client import MediSearchClient, Settings as MediSettings
+import httpx
 
 logger = logging.getLogger(__name__)
 
 
 class EvidenceRetriever:
     def __init__(self, api_key: str):
-        self.client = MediSearchClient(api_key=api_key)
+        self.api_key = api_key
+        self.client = httpx.AsyncClient(timeout=httpx.Timeout(45, connect=10))
 
-    def search(self, conversation: list[str], conversation_id: str) -> dict:
-        """Query MediSearch with the current conversation.
+    async def aclose(self):
+        await self.client.aclose()
 
-        Returns dict with keys ``response`` (str), ``articles`` (list[dict]),
-        ``followups`` (list[str]). Never raises — degrades to empty results.
-        """
-        result: dict = {"response": "", "articles": [], "followups": []}
-        logger.info(
-            "evidence.search start conversation_id=%s messages=%d",
-            conversation_id, len(conversation),
-        )
-        try:
-            responses = self.client.send_message(
-                conversation=conversation,
-                conversation_id=conversation_id,
-                should_stream_response=False,
-                settings=MediSettings(language="English", followup_count=3),
-            )
-            for event in responses:
-                event_type = event.get("event", "")
-                if event_type == "llm_response":
-                    result["response"] += event.get("data", "")
-                elif event_type == "articles":
-                    result["articles"] = event.get("data", [])
-                elif event_type == "followups":
-                    result["followups"] = event.get("data", [])
-                elif event_type == "error":
-                    logger.warning("evidence.search api error: %s", event.get("data"))
-        except Exception:
-            logger.exception("evidence.search failed conversation_id=%s", conversation_id)
-
-        logger.info(
-            "evidence.search done conversation_id=%s response_chars=%d articles=%d followups=%d",
-            conversation_id,
-            len(result["response"]),
-            len(result["articles"]),
-            len(result["followups"]),
-        )
-        return result
+    async def search(self, conversation: list[str], conversation_id: str) -> dict:
+        payload = {
+            "conversation": conversation, "id": conversation_id, "key": self.api_key,
+            "settings": {"language": "English", "model_type": "standard", "followup_count": 3},
+        }
+        for attempt in range(2):
+            result = {"response": "", "articles": [], "followups": []}
+            try:
+                async with self.client.stream("POST", "https://api.backend.medisearch.io/sse/medichat", json=payload) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if not line.startswith("data:"):
+                            continue
+                        data = line[5:].strip()
+                        if data == "[DONE]":
+                            break
+                        event = json.loads(data)
+                        value = event.get("data")
+                        if event.get("event") == "error":
+                            raise ValueError("Evidence provider could not complete retrieval")
+                        if event.get("event") == "llm_response" and isinstance(value, str):
+                            result["response"] += value
+                        elif event.get("event") == "articles" and isinstance(value, list):
+                            result["articles"] = [a for a in value if isinstance(a, dict) and isinstance(a.get("title"), str)]
+                        elif event.get("event") == "followups" and isinstance(value, list):
+                            result["followups"] = [q for q in value if isinstance(q, str)][:3]
+                return result
+            except (httpx.HTTPError, ValueError, TypeError) as exc:
+                status = getattr(getattr(exc, "response", None), "status_code", None)
+                logger.warning("evidence.unavailable kind=%s status=%s", type(exc).__name__, status)
+                if attempt == 0 and (status in {429, 500, 502, 503, 504} or isinstance(exc, httpx.TransportError)):
+                    await asyncio.sleep(1)
+                    continue
+                return {"response": "", "articles": [], "followups": []}
+        return {"response": "", "articles": [], "followups": []}

@@ -40,7 +40,10 @@ class Settings(BaseSettings):
     # --- Server ---
     port: int = 8080
     log_level: str = "INFO"
-    cors_origins: str = "*"  # comma-separated list, or "*"
+    cors_origins: str = ""
+    request_timeout_seconds: float = 150.0
+    max_concurrent_requests: int = 8
+    metrics_token: str = ""
 
     # --- Request limits ---
     max_conversation_messages: int = 40

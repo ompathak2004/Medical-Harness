@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from app.pipeline import AgentPipeline
+from app.pipeline import AgentPipeline, ReviewUnavailable
 
 
 class FakeLLM:
@@ -117,7 +117,7 @@ class TestFollowUpPath:
         result = events[-1][1]
         assert result["type"] == "follow_up"
         assert result["follow_up_questions"] == ["How long?", "Any fever?"]
-        assert result["preliminary_info"] == "Headaches are common."
+        assert "not sure" in result["preliminary_info"]
         assert result["answer"] is None
 
     async def test_clarification_limit_forces_answer(self):
@@ -163,7 +163,7 @@ class TestEmergencyPath:
 
 
 class TestDegradation:
-    async def test_triage_failure_defaults_to_answer(self):
+    async def test_triage_failure_stops_generation(self):
         class BrokenTriageLLM(FakeLLM):
             async def generate(self, user, system=None):
                 if TRIAGE_KEY in f"{system or ''}\n{user}":
@@ -176,10 +176,10 @@ class TestDegradation:
             SAFETY_KEY: json.dumps({"is_safe": True, "issues": [], "revised_answer": ""}),
         }
         p = AgentPipeline(llm=BrokenTriageLLM(script), evidence=FakeEvidence())
-        result = await p.run(["What is asthma?"], "cid")
-        assert result["type"] == "answer"
+        with pytest.raises(ReviewUnavailable):
+            await p.run(["What is asthma?"], "cid")
 
-    async def test_stream_failure_falls_back_to_evidence_summary(self):
+    async def test_stream_failure_never_publishes_unreviewed_fallback(self):
         class BrokenStreamLLM(FakeLLM):
             async def generate_stream(self, user, system=None):
                 raise RuntimeError("stream down")
@@ -195,8 +195,8 @@ class TestDegradation:
             llm=BrokenStreamLLM(script),
             evidence=FakeEvidence(response="MediSearch fallback summary."),
         )
-        result = await p.run(["What is flu?"], "cid")
-        assert "MediSearch fallback summary." in result["answer"]
+        with pytest.raises(ReviewUnavailable):
+            await p.run(["What is flu?"], "cid")
 
 
 class TestToolFlow:
@@ -271,8 +271,10 @@ class TestStepCaching:
         }
         p = AgentPipeline(llm=FakeLLM(script), evidence=evidence)
         await p.run(["What is flu?"], "cid1")
-        await p.run(["What is flu?"], "cid2")
+        await p.run(["What is flu?"], "cid1")
         assert evidence.searches == 1
+        await p.run(["What is flu?"], "cid2")
+        assert evidence.searches == 2
 
 
 class TestTokenBudgets:
