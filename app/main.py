@@ -55,7 +55,7 @@ def create_app() -> FastAPI:
         await llm.aclose()
         await evidence.aclose()
 
-    app = FastAPI(title="MediSearch Agent", version=__version__, lifespan=lifespan)
+    app = FastAPI(title="OpenMed", version=__version__, lifespan=lifespan)
 
     app.add_middleware(GZipMiddleware, minimum_size=1024)
     app.add_middleware(

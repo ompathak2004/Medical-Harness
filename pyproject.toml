@@ -16,6 +16,9 @@ dependencies = [
 [project.scripts]
 medisearch-agent = "app.main:run"
 
+[tool.vercel]
+entrypoint = "app.main:app"
+
 [dependency-groups]
 dev = [
     "pytest>=8.0.0",

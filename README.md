@@ -1,4 +1,4 @@
-# MediSearch Agent
+# OpenMed
 
 Evidence-based medical QA agent for patients. Ask a health question and get a
 cited, safety-reviewed answer grounded in peer-reviewed literature — with
@@ -57,6 +57,25 @@ docker tag medisearch-agent registry.digitalocean.com/<registry>/medisearch-agen
 docker push registry.digitalocean.com/<registry>/medisearch-agent:latest
 doctl apps create --spec deploy/app-spec.yaml   # set secret env values in the DO console
 ```
+
+## Deploy (Vercel)
+
+1. In Vercel, select **Add New → Project**, import this GitHub repository,
+   and select the account or team that should own it. Keep the root directory
+   as the repository root and leave the build and output settings at their
+   defaults. Vercel uses the FastAPI app exported from `app/main.py`.
+2. Before deploying, add `CEREBRAS_API_KEY` and `MEDISEARCH_API_KEY` under
+   **Project Settings → Environment Variables** for Production. Add them for
+   Preview too if you plan to use preview deployments. Get these keys from
+   Cerebras Cloud and MediSearch, respectively; Vercel does not issue them.
+3. Deploy, then check `/api/health` and load the home page. The chat endpoint
+   needs both provider keys to answer questions. After changing environment
+   variables, redeploy for the new values to take effect.
+
+`vercel.json` allows the app's 150-second request timeout to finish within a
+180-second Vercel Function invocation. The in-memory caches and rate limiter
+are per Function instance, so they are not shared across scaled instances.
+No Vercel access token is needed for a Git-connected dashboard deployment.
 
 ## 3D anatomy model
 

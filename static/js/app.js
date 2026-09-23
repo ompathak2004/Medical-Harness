@@ -56,7 +56,7 @@ const nextMsgId = () => 'm' + (++msgCounter);
 const reducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 const ICON = {
-  pulse: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+  pulse: '<path d="M19 5a9 9 0 1 0 0 14"/><path d="M16 12h8"/>',
   user: '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
   body: '<path d="M12 2a3 3 0 0 0-3 3v1H7a1 1 0 0 0-1 1v3a4 4 0 0 0 1 2.65V20a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-7.35A4 4 0 0 0 18 10V7a1 1 0 0 0-1-1h-2V5a3 3 0 0 0-3-3z"/>',
   close: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
@@ -87,28 +87,20 @@ function appendToChat(node) {
   if (stick) scheduleScroll();
 }
 
-const EXAMPLE_PROMPTS = [
-  { label: 'Understand a symptom', text: "I've been getting headaches in the afternoon. What should I pay attention to?", icon: ICON.pulse },
-  { label: 'Check a medication', text: 'What should I know before taking ibuprofen?', icon: ICON.info },
-  { label: 'Make sense of a result', text: 'What does an elevated HbA1c result mean?', icon: ICON.check },
-];
-
 function renderHero() {
+  document.body.classList.add('is-home');
   const hero = document.createElement('section');
   hero.className = 'hero';
   hero.id = 'hero';
   hero.innerHTML = `
-    <div class="hero-eyebrow"><span></span> A little clarity for your health</div>
-    <h2>Health questions.<br><em>Thoughtful answers.</em></h2>
-    <p class="hero-value-prop">Understand what you’re feeling, explore the evidence,<br class="desktop-break"> and feel more prepared for your next conversation with a doctor.</p>
-    <div class="hero-examples-label">A place to start</div>
-    <div class="hero-chips">${EXAMPLE_PROMPTS.map(p => `<button type="button" class="hero-chip" data-action="hero-chip" data-value="${escapeAttr(p.text)}"><span class="example-icon">${svg(p.icon)}</span><strong>${p.label}</strong><span>${escapeHtml(p.text)}</span><span class="example-arrow">↗</span></button>`).join('')}</div>
-    <div class="hero-footnote">Grounded in medical sources <span>·</span> Written for you</div>
+    <h2>What would you like to know?</h2>
+    <p class="hero-value-prop">Ask a health question. Get a clear answer with sources.</p>
   `;
   chatScrollInner.appendChild(hero);
 }
 
 function removeHero() {
+  document.body.classList.remove('is-home');
   const hero = document.getElementById('hero');
   if (hero) hero.remove();
 }

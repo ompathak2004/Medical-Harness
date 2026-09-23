@@ -1,0 +1,14 @@
+.env
+.env.*
+!.env.example
+.venv/
+.pytest_cache/
+__pycache__/
+*.pyc
+.artifacts/
+tests/
+healtbench/
+docs/
+scripts/
+deploy/
+eval_healthbench.py
