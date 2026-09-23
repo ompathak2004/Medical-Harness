@@ -1,6 +1,6 @@
 # Screenshots and recording
 
-These captures are from the public OpenMed deployment. They use the empty home screen and a non-personal example; no API keys or patient data are shown. The short recording demonstrates theme switching and entering a question. It does not show an answer.
+These captures show the public OpenMed interface with no private health data or API keys. The recording demonstrates theme switching and question entry; it does not show an answer.
 
 ## Desktop
 

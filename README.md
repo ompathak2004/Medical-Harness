@@ -20,7 +20,7 @@ Ask a health question and get an evidence-grounded answer with source articles. 
 
 ## Run locally
 
-You need Python 3.12 or newer, [uv](https://docs.astral.sh/uv/getting-started/installation/), and API keys from [Cerebras Cloud](https://inference-docs.cerebras.ai/console/api-keys) and [MediSearch Developers](https://medisearch.io/developers/docs). The keys belong to those services; Vercel does not provide them.
+You need Python 3.10 or newer (3.12 is recommended), [uv](https://docs.astral.sh/uv/getting-started/installation/), and API keys from [Cerebras Cloud](https://inference-docs.cerebras.ai/console/api-keys) and [MediSearch Developers](https://medisearch.io/developers/docs). The keys belong to those services; Vercel does not provide them.
 
 ```bash
 git clone https://github.com/ompathak2004/Medical-Harness.git

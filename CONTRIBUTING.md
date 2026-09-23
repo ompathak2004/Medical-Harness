@@ -2,6 +2,8 @@
 
 Thanks for helping improve OpenMed. Issues and pull requests are welcome for bugs, accessibility, documentation, reliability, and carefully scoped features.
 
+Please follow the [community code of conduct](CODE_OF_CONDUCT.md).
+
 ## Before you change code
 
 1. Read the [README](README.md) for local setup and [architecture guide](docs/ARCHITECTURE.md) for the request flow.

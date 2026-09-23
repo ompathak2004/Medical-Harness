@@ -1,0 +1,33 @@
+name: Bug report
+description: Report a reproducible OpenMed problem using synthetic data.
+title: "Bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "Do not include API keys, personal health information, or private patient records. Report security vulnerabilities privately using SECURITY.md."
+  - type: textarea
+    id: observed
+    attributes:
+      label: What happened?
+      description: Describe the visible behavior and any safe error message.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Use a synthetic example question if needed.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Browser/device or Python version and deployment type.

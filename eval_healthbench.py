@@ -197,10 +197,16 @@ def main():
     parser.add_argument(
         "--file",
         type=str,
-        default="healtbench/hard_2025-05-08-21-00-10.jsonl",
+        default="data/healthbench-hard.jsonl",
         help="Path to HealthBench JSONL file",
     )
     args = parser.parse_args()
+
+    if not os.path.isfile(args.file):
+        parser.error(
+            "Benchmark file not found. Download HealthBench Hard as described "
+            "in docs/EVALUATION.md, then pass --file PATH if needed."
+        )
 
     # Initialize components
     settings = get_settings()
@@ -250,7 +256,8 @@ def main():
         print(f"  Example {r['example_idx']+1}: {r['earned']}/{r['max_possible']} ({r['score_pct']:.1f}%) - {r['question'][:60]}...")
 
     # Save detailed results
-    out_path = "healtbench/eval_results.json"
+    os.makedirs("data", exist_ok=True)
+    out_path = "data/healthbench-results.json"
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(
             {
