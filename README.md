@@ -1,110 +1,87 @@
 # OpenMed
 
-Evidence-based medical QA agent for patients. Ask a health question and get a
-cited, safety-reviewed answer grounded in peer-reviewed literature — with
-clinical risk calculators and an interactive 3D anatomy viewer.
+Ask a health question and get an evidence-grounded answer with source articles. OpenMed combines a FastAPI agent, clinical calculators, and an interactive 3D anatomy viewer in a single web application.
 
-> Informational only — not a substitute for professional medical advice.
+**[Try the live app](https://medisearch-agent.vercel.app/)** · [How it works](docs/ARCHITECTURE.md) · [Contributing](CONTRIBUTING.md)
 
-## Features
+> OpenMed provides educational information, not a diagnosis or a substitute for a clinician. For emergencies, contact local emergency services.
 
-- **Evidence-first answers** — every claim cites peer-reviewed articles
-  retrieved via [MediSearch](https://medisearch.io); a safety-review pass
-  rejects unsupported or unsafe content.
-- **Emergency triage** — red-flag presentations (heart attack, stroke,
-  anaphylaxis, …) short-circuit to an immediate "call emergency services"
-  response with while-you-wait guidance.
-- **Clinical calculators** — Wells (DVT), CHA₂DS₂-VASc, Framingham, MRC
-  grade, BMI — deterministic Python, selected and populated by the LLM.
-- **Interactive 3D anatomy** — a three.js body model auto-highlights the
-  region under discussion; patients tap sub-parts to describe exactly where
-  it hurts.
-- **Fast** — Cerebras `gpt-oss-120b` (~3,000 tok/s) + parallelized pipeline
-  stages + token-streamed answers over SSE.
+## What you can do
 
-## Quick start
+- Ask a question in plain language and follow up in the same conversation.
+- Read an answer linked to medical source articles. If retrieval fails, the agent does not invent supporting sources.
+- Use deterministic clinical calculators when relevant to the question.
+- Explore anatomy by layer, region, or named structure in the 3D body map.
+- Switch between light and dark themes on desktop or mobile.
+
+## Run locally
+
+You need Python 3.12 or newer, [uv](https://docs.astral.sh/uv/getting-started/installation/), and API keys from [Cerebras Cloud](https://inference-docs.cerebras.ai/console/api-keys) and [MediSearch Developers](https://medisearch.io/developers/docs). The keys belong to those services; Vercel does not provide them.
 
 ```bash
-cp .env.example .env      # fill in CEREBRAS_API_KEY and MEDISEARCH_API_KEY
-uv sync
-uv run medisearch-agent   # serves http://localhost:8080
+git clone https://github.com/ompathak2004/Medical-Harness.git
+cd Medical-Harness
+uv sync --locked
 ```
 
-## Tests
+Copy the example configuration and fill in the two required keys:
 
 ```bash
-uv run pytest
+# macOS / Linux
+cp .env.example .env
+
+# Windows PowerShell
+Copy-Item .env.example .env
 ```
 
-## HealthBench evaluation
+Set `CEREBRAS_API_KEY` and `MEDISEARCH_API_KEY` in `.env`, then start the app:
 
 ```bash
-uv run python eval_healthbench.py --limit 5
+uv run medisearch-agent
 ```
 
-## Docker
+Open <http://localhost:8080>. Check <http://localhost:8080/api/health> if the page does not load. The interactive API reference is at <http://localhost:8080/docs>.
+
+The `.env` file is ignored by Git. Do not commit keys or put them in screenshots, issues, or pull requests. Tests use fake keys and do not call the paid APIs.
+
+### Docker
 
 ```bash
-docker build -t medisearch-agent .
-docker run -p 8080:8080 --env-file .env medisearch-agent
+docker build -t openmed .
+docker run --env-file .env -p 8080:8080 openmed
 ```
 
-## Deploy (DigitalOcean App Platform)
+## Repository map
+
+| Path | Purpose |
+| --- | --- |
+| `app/main.py` | FastAPI app, middleware, lifecycle, static frontend |
+| `app/api/routes.py` | Chat, streaming chat, health, and metrics routes |
+| `app/pipeline.py` | Triage, retrieval, calculators, generation, safety review |
+| `app/prompts.py` | LLM instructions and output formats |
+| `app/llm.py`, `app/evidence.py` | Cerebras and MediSearch clients |
+| `app/tools/` | Clinical calculators and anatomy region detection |
+| `static/` | Browser UI, styles, scripts, and licensed anatomy assets |
+| `tests/` | Mocked API and deterministic pipeline tests |
+| `docs/` | Architecture, API, deployment, and visual walkthrough |
+
+Read [the architecture guide](docs/ARCHITECTURE.md) for the request flow and the [API guide](docs/API.md) for example requests and streaming events. [AGENTS.md](AGENTS.md) is the short working map for coding agents.
+
+## Develop
 
 ```bash
-doctl registry login
-docker tag medisearch-agent registry.digitalocean.com/<registry>/medisearch-agent:latest
-docker push registry.digitalocean.com/<registry>/medisearch-agent:latest
-doctl apps create --spec deploy/app-spec.yaml   # set secret env values in the DO console
+uv sync --locked
+uv run pytest -q
 ```
 
-## Deploy (Vercel)
+See [CONTRIBUTING.md](CONTRIBUTING.md) for change and pull request guidance. CI runs the test suite without production secrets. The optional HealthBench evaluation is documented in [docs/EVALUATION.md](docs/EVALUATION.md) and requires provider keys.
 
-1. In Vercel, select **Add New → Project**, import this GitHub repository,
-   and select the account or team that should own it. Keep the root directory
-   as the repository root and leave the build and output settings at their
-   defaults. Vercel uses the FastAPI app exported from `app/main.py`.
-2. Before deploying, add `CEREBRAS_API_KEY` and `MEDISEARCH_API_KEY` under
-   **Project Settings → Environment Variables** for Production. Add them for
-   Preview too if you plan to use preview deployments. Get these keys from
-   Cerebras Cloud and MediSearch, respectively; Vercel does not issue them.
-3. Deploy, then check `/api/health` and load the home page. The chat endpoint
-   needs both provider keys to answer questions. After changing environment
-   variables, redeploy for the new values to take effect.
+## Deploy
 
-`vercel.json` allows the app's 150-second request timeout to finish within a
-180-second Vercel Function invocation. The in-memory caches and rate limiter
-are per Function instance, so they are not shared across scaled instances.
-No Vercel access token is needed for a Git-connected dashboard deployment.
+The app can run as one FastAPI Function on Vercel. Import this repository, keep the root directory at the repository root, and add `CEREBRAS_API_KEY` and `MEDISEARCH_API_KEY` in **Project Settings → Environment Variables** before deploying. The checked-in `vercel.json` sets a 180-second function limit. You can also deploy with `vercel deploy --prod` after linking a project.
 
-## 3D anatomy model
+Docker and DigitalOcean deployment notes are in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). Environment variable details are in [docs/CONFIGURATION.md](docs/CONFIGURATION.md). The in-memory cache and rate limiter are local to each process or Vercel Function instance.
 
-The interactive body map renders real anatomical geometry derived from
-[BodyParts3D](https://dbarchive.biosciencedbc.jp/data/bodyparts3d/LATEST/README_e.html)
-(© The Database Center for Life Science, licensed under
-[CC Attribution 4.0 International](https://creativecommons.org/licenses/by/4.0/)).
-Per-layer GLBs (skin, skeleton, muscles, organs, vascular, nerves) live in
-`static/assets/anatomy/` together with `structures.json`, which maps every
-mesh to its FMA concept name, body region, and organ group.
+## License and attribution
 
-Assets are reproducible with the pipeline script:
-
-```bash
-python scripts/build_anatomy_assets.py \
-  --assets-dir <dir-with-source-glbs> \
-  --metadata <parsed_metadata.json|asset-pack.zip> \
-  --obj-zip isa_BP3D_4.0_obj_99.zip \
-  --out static/assets/anatomy
-```
-
-The source GLBs come from the
-[anatomy-lab](https://github.com/MrH0v0/anatomy-lab) (MIT) BodyParts3D
-conversion pipeline; `--obj-zip` additionally converts major superficial
-muscles (gastrocnemius, biceps, deltoid, trapezius, quadriceps, ...) straight
-from the official BodyParts3D OBJ archive. Everything is simplified and
-meshopt-compressed with `gltfpack`.
-
-## Architecture
-
-See [docs/BLUEPRINT.md](docs/BLUEPRINT.md) for the full design blueprint
-(pipeline, safety architecture, SSE contract, latency design, deployment).
+The application code is [MIT licensed](LICENSE). The included BodyParts3D-derived anatomy data is licensed separately under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); see [NOTICE.md](NOTICE.md) for attribution and asset details.
