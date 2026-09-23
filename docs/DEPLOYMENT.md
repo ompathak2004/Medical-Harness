@@ -8,7 +8,8 @@ Vercel recognizes `app.main:app` through `pyproject.toml`. `vercel.json` gives t
 
 1. In Vercel, create a project from this GitHub repository. Leave the root directory at the repository root and use the detected FastAPI settings.
 2. Add both provider keys under **Project Settings → Environment Variables** for Production. Add Preview only if preview deployments should call the providers.
-3. Deploy. Open `/api/health`, the home page, and `/docs`. Test a harmless question to confirm both providers can be reached.
+3. In the project's **Analytics** section, enable Web Analytics. The static HTML loads Vercel's `/_vercel/insights/script.js` endpoint for page views; it does not send custom events or chat messages.
+4. Deploy. Open `/api/health`, the home page, and `/docs`. Test a harmless question to confirm both providers can be reached.
 
 You can also deploy a linked local checkout with:
 

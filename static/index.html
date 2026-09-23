@@ -175,5 +175,13 @@
 <div class="citation-tooltip" id="citation-tooltip"></div>
 
 <script type="module" src="/static/js/app.js"></script>
+
+<!-- Vercel Web Analytics records page views; OpenMed does not send chat events. -->
+<script>
+  window.va = window.va || function () {
+    (window.vaq = window.vaq || []).push(arguments);
+  };
+</script>
+<script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>
