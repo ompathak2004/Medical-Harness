@@ -2,7 +2,7 @@
 HealthBench Hard evaluation script.
 
 Reads the HealthBench Hard JSONL file, sends each prompt through our agent
-pipeline, then uses Gemini to grade the response against each rubric criterion.
+pipeline, then uses the configured Cerebras model to grade each rubric criterion.
 
 Usage:
     uv run python eval_healthbench.py --limit 5
@@ -87,7 +87,7 @@ def get_conversation(prompt: list[dict]) -> list[str]:
 
 
 def grade_rubric(llm: CerebrasClient, question: str, answer: str, rubric: dict) -> dict:
-    """Grade a single rubric criterion using Gemini."""
+    """Grade a single rubric criterion using the configured model."""
     prompt = GRADING_PROMPT.format(
         question=question,
         answer=answer,
