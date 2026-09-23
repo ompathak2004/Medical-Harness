@@ -6,6 +6,10 @@ Ask a health question and get an evidence-grounded answer with source articles. 
 
 > OpenMed provides educational information, not a diagnosis or a substitute for a clinician. For emergencies, contact local emergency services.
 
+![OpenMed home screen in light theme](docs/media/desktop-light.png)
+
+[More screenshots and a short screen recording](docs/VISUALS.md)
+
 ## What you can do
 
 - Ask a question in plain language and follow up in the same conversation.
