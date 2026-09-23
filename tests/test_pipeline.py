@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from app.pipeline import AgentPipeline, ReviewUnavailable
+from app.pipeline import AgentPipeline, CLARIFICATION_INTRO, ReviewUnavailable
 
 
 class FakeLLM:
@@ -124,17 +124,93 @@ class TestFollowUpPath:
         p = make_pipeline(
             {"action": "ask", "follow_up_questions": ["More?"], "preliminary_info": "info"}
         )
-        # Two prior assistant clarification turns (short, question-bearing).
+        # One prior assistant clarification form reaches the configured limit.
         conversation = [
             "I have a headache",
-            "How long has it lasted? Any fever?",
+            CLARIFICATION_INTRO + " How long has it lasted? Any fever?",
             "3 days, no fever",
-            "Is the pain one-sided? Any visual changes?",
-            "It is one-sided, no visual changes",
         ]
         events = await collect(p, conversation)
         result = events[-1][1]
         assert result["type"] == "answer"
+
+
+class TestConversationPath:
+    @pytest.mark.parametrize("message", ["hi", "hii", "Hello!", "morning", "good evening"])
+    async def test_first_turn_greeting_does_not_ask_for_symptoms(self, message):
+        class NoEvidence(FakeEvidence):
+            def search(self, conversation, conversation_id):
+                raise AssertionError("Routine messages must not trigger medical retrieval")
+
+        p = make_pipeline({
+            "action": "ask",
+            "follow_up_questions": ["What symptoms are you having?"],
+        })
+        p.evidence = NoEvidence()
+        events = await collect(p, [message])
+        result = events[-1][1]
+        assert result["type"] == "conversation"
+        assert result["answer"].startswith("Hi!")
+        assert result["follow_up_questions"] == []
+        assert result["articles"] == []
+        assert result["evidence_status"] == "not_applicable"
+        assert [e[1]["step"] for e in events if e[0] == "step"] == ["triage"]
+        assert len(p.llm.calls) == 1
+        assert p.outcome_stats()["conversation"] == 1
+
+    @pytest.mark.parametrize("message,kind", [
+        ("thanks", "courtesy"),
+        ("bye", "farewell"),
+        ("what can you do?", "capabilities"),
+    ])
+    async def test_other_routine_messages(self, message, kind):
+        p = make_pipeline({"action": "conversation", "conversation_kind": kind})
+        result = await p.run([message], "cid")
+        assert result["type"] == "conversation"
+        assert result["answer"]
+        assert result["tool_results"] == []
+
+    @pytest.mark.parametrize("kind", ["unclear", "off_topic"])
+    async def test_model_routes_nonmedical_message_without_evidence(self, kind):
+        p = make_pipeline({"action": "conversation", "conversation_kind": kind})
+        result = await p.run(["xyzzy" if kind == "unclear" else "Tell me a joke"], "cid")
+        assert result["type"] == "conversation"
+        assert len(p.llm.calls) == 1
+
+    async def test_mixed_greeting_keeps_emergency_priority(self):
+        p = make_pipeline({"action": "emergency"})
+        result = await p.run(["Hi, I have crushing chest pain and I'm sweating"], "cid")
+        assert result["type"] == "emergency"
+
+    async def test_short_reply_to_medical_followup_is_not_treated_as_greeting(self):
+        p = make_pipeline({"action": "answer"})
+        result = await p.run([
+            "When does my headache happen?",
+            "When does it usually occur?",
+            "morning",
+        ], "cid")
+        assert result["type"] == "answer"
+        assert result["articles"]
+
+    async def test_greeting_reply_does_not_use_medical_clarification_allowance(self):
+        p = make_pipeline({"action": "ask", "follow_up_questions": ["How long have you felt unwell?"]})
+        result = await p.run([
+            "hi",
+            "Hi! What health question can I help you with?",
+            "I feel unwell",
+        ], "cid")
+        assert result["type"] == "follow_up"
+
+    async def test_triage_failure_still_blocks_routine_reply(self):
+        p = make_pipeline({"action": "invalid"})
+        with pytest.raises(ReviewUnavailable):
+            await p.run(["hi"], "cid")
+
+    async def test_first_turn_acknowledgment_requests_a_health_question(self):
+        p = make_pipeline({"action": "ask", "follow_up_questions": ["What symptoms?"]})
+        result = await p.run(["okay"], "cid")
+        assert result["type"] == "conversation"
+        assert "what health question" in result["answer"].lower()
 
 
 class TestEmergencyPath:

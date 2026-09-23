@@ -31,7 +31,7 @@ curl -X POST http://localhost:8080/api/chat \
   -d '{"conversation":["What does BMI mean?"]}'
 ```
 
-The response has `type` (`answer`, `follow_up`, or `emergency`), `conversation_id`, `answer`, `articles`, `tool_results`, `followups`, `anatomy_context`, and emergency or clarification fields. See `app/schemas.py` for exact optional fields and defaults.
+The response has `type` (`answer`, `follow_up`, `emergency`, or `conversation`), `conversation_id`, `answer`, `articles`, `tool_results`, `followups`, `anatomy_context`, and emergency or clarification fields. A `conversation` result handles greetings, thanks, help requests, unclear messages, and unrelated requests with a short reply in `answer`. It has no articles or calculator results and uses `evidence_status: "not_applicable"`. See `app/schemas.py` for exact optional fields and defaults.
 
 ## Streaming chat
 
@@ -55,7 +55,7 @@ The server may send SSE comment keep-alives while work is pending. Consumers sho
 
 ## Metrics
 
-`GET /api/metrics` is available only when `METRICS_TOKEN` is set. Send `Authorization: Bearer <token>`. Without a matching token, the route returns 404. It reports numeric usage and cache counters, not question text.
+`GET /api/metrics` is available only when `METRICS_TOKEN` is set. Send `Authorization: Bearer <token>`. Without a matching token, the route returns 404. It reports numeric usage, cache counters, and completed outcome counts (`conversation`, `follow_up`, `answer`, `emergency`, and `evidence_unavailable`), not question text. Counts are per process or Vercel Function instance.
 
 ## Limits and errors
 

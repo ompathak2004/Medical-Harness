@@ -139,4 +139,5 @@ async def metrics(request: Request) -> dict:
         "llm": llm.usage_stats(),
         "step_cache": pipeline.step_cache.stats(),
         "evidence_cache": pipeline.evidence_cache.stats(),
+        "outcomes": pipeline.outcome_stats(),
     }

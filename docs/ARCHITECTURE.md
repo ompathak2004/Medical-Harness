@@ -19,7 +19,7 @@ flowchart LR
 
 1. `static/js/app.js` sends the conversation to `POST /api/chat/stream`. The UI also manages the theme, messages, citation panels, and anatomy drawer.
 2. `app/api/routes.py` validates the alternating conversation, sets a per-request cache scope, enforces concurrency and a timeout, and streams events. `app/main.py` sets up middleware, provider clients, and the pipeline during startup.
-3. `AgentPipeline.run_streaming()` first asks Cerebras to classify the question as `emergency`, `ask`, or `answer`. An emergency result stops the normal pipeline. An `ask` result returns up to three clarification questions; only one clarification round is allowed.
+3. `AgentPipeline.run_streaming()` first asks Cerebras to classify the latest turn in context as `emergency`, `ask`, `answer`, or `conversation`. An emergency result stops the normal pipeline. A `conversation` result gives a fixed, nonclinical reply without retrieval. An `ask` result returns up to three clarification questions; only one clarification round is allowed.
 4. For an answer, tool selection and MediSearch retrieval run concurrently. Selected calculators execute deterministic Python functions from `app/tools/clinical.py`; the model extracts input variables but does not calculate scores.
 5. If no source articles arrive, the pipeline returns an evidence-unavailable answer. Otherwise it generates an answer, runs a separate safety review, and only then emits the reviewed answer and final result. The current implementation does **not** send unreviewed tokens to the browser.
 6. The browser renders articles, calculator results, follow-up suggestions, and anatomy context. `static/js/anatomy-viewer.js` loads the layered GLB assets on demand.
@@ -42,7 +42,7 @@ flowchart LR
 
 ## Safety and failure behavior
 
-Triage precedes normal answering. Evidence is required for a sourced answer; retrieval failure produces an explicit limitation. The answer review can accept or revise an answer, and a failed review stops the answer path. The UI and API show emergency guidance separately from normal answers. These are application safeguards, not proof of clinical validity.
+Triage precedes normal answering. Exact first-turn greetings and other routine messages can override an unnecessary medical clarification after emergency triage. Evidence is required for a sourced medical answer; retrieval failure produces an explicit limitation. Conversational replies make no medical claims and do not require retrieval. The answer review can accept or revise a medical answer, and a failed review stops the answer path. The UI and API show emergency guidance separately from normal answers. These are application safeguards, not proof of clinical validity.
 
 The caches and rate limiter live in each process. On Vercel, different Function instances do not share them. OpenMed has no user accounts, database, or durable conversation history. The browser holds the conversation during the page session and sends it with each request.
 

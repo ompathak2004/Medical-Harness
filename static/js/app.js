@@ -300,9 +300,11 @@ function handleResult(wrap, msgId, data) {
     renderEmergencyBanner(data);
     currentAnatomyContext = data.anatomy_context?.has_anatomy ? data.anatomy_context : null;
     conversation.push(((data.emergency_message || '') + (data.answer ? '\n\n' + data.answer : '')).trim());
-  } else {
+  } else if (data.type === 'answer' || data.type === 'conversation') {
     finalizeAnswer(wrap, data, msgId);
     conversation.push(data.answer || '');
+  } else {
+    throw new Error('The response could not be displayed. Please try again.');
   }
 }
 

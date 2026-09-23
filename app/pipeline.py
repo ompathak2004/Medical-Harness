@@ -5,10 +5,12 @@ import logging
 import time
 import inspect
 from contextvars import ContextVar
+from collections import Counter
 from collections.abc import AsyncIterator
 
 from app.cache import TTLCache, text_key
 from app.config import get_settings
+from app.conversation import CONVERSATION_REPLIES, routine_kind
 from app.evidence import EvidenceRetriever
 from app.json_utils import parse_json_response
 from app.llm import CerebrasClient
@@ -31,6 +33,10 @@ from app.tools.clinical import TOOL_REGISTRY
 
 logger = logging.getLogger(__name__)
 cache_scope = ContextVar("cache_scope", default="internal")
+CLARIFICATION_INTRO = (
+    "A few details will help me understand your question. "
+    "You can write ‘not sure’ for anything you do not know."
+)
 
 
 class ReviewUnavailable(RuntimeError):
@@ -85,6 +91,7 @@ class AgentPipeline:
             max_entries=settings.evidence_cache_entries,
             ttl_seconds=settings.evidence_cache_ttl_seconds,
         )
+        self._outcomes: Counter[str] = Counter()
         # Formatted ONCE with the static tool registry so the system message
         # stays byte-identical across requests (prefix-cache friendly).
         self.tool_selection_system = TOOL_SELECTION_SYSTEM.format(
@@ -117,10 +124,25 @@ class AgentPipeline:
         triage = await self._triage(conv_text)
         action = triage["action"]
         if action == "emergency":
+            self._outcomes["emergency"] += 1
             yield ("result", _empty_result(
                 type="emergency", emergency=True,
                 emergency_message="Your symptoms may need immediate medical attention. Contact your local emergency services now. Do not wait for an online answer.",
                 answer="If possible, ask someone nearby to stay with you and follow the emergency dispatcher's instructions.",
+            ))
+            return
+
+        # Exact routine messages override an over-eager "ask" classification.
+        # The emergency decision above always takes precedence.
+        conversation_kind = routine_kind(conversation[-1]) if len(conversation) == 1 else None
+        if conversation_kind is None and action == "conversation":
+            conversation_kind = triage["conversation_kind"]
+        if conversation_kind is not None:
+            self._outcomes["conversation"] += 1
+            yield ("result", _empty_result(
+                type="conversation",
+                answer=CONVERSATION_REPLIES[conversation_kind],
+                evidence_status="not_applicable",
             ))
             return
 
@@ -138,10 +160,11 @@ class AgentPipeline:
                     "pipeline.follow_up conversation_id=%s elapsed=%.1fs",
                     conversation_id, time.monotonic() - t0,
                 )
+                self._outcomes["follow_up"] += 1
                 yield ("result", _empty_result(
                     type="follow_up",
                     follow_up_questions=triage["follow_up_questions"],
-                    preliminary_info="A few details will help me understand your question. You can write ‘not sure’ for anything you do not know.",
+                    preliminary_info=CLARIFICATION_INTRO,
                     anatomy_context=anatomy_context,
                 ))
                 return
@@ -154,6 +177,7 @@ class AgentPipeline:
         evidence_result = dict(evidence_result)
         evidence_result["articles"] = evidence_result.get("articles", [])[:self.max_evidence_articles]
         if not evidence_result["articles"]:
+            self._outcomes["evidence_unavailable"] += 1
             yield ("result", _empty_result(
                 answer="I couldn’t retrieve supporting medical sources for this question. Please try again, or discuss your symptoms with a healthcare professional. If symptoms are severe or rapidly worsening, seek urgent care.",
                 evidence_status="unavailable",
@@ -188,6 +212,7 @@ class AgentPipeline:
             len(answer),
             time.monotonic() - t0,
         )
+        self._outcomes["answer"] += 1
         yield ("result", _empty_result(
             type="answer",
             answer=answer,
@@ -201,6 +226,13 @@ class AgentPipeline:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def outcome_stats(self) -> dict[str, int]:
+        """Count completed paths without retaining conversation content."""
+        return {
+            key: self._outcomes[key]
+            for key in ("conversation", "follow_up", "answer", "emergency", "evidence_unavailable")
+        }
+
     @staticmethod
     def _format_conversation(conversation: list[str]) -> str:
         lines = []
@@ -211,11 +243,11 @@ class AgentPipeline:
 
     @staticmethod
     def _count_prior_clarifications(conversation: list[str]) -> int:
-        """Count prior assistant follow-up rounds (short, question-bearing turns)."""
+        """Count only clarification forms emitted by this pipeline."""
         count = 0
         for i in range(1, len(conversation), 2):
             msg = conversation[i]
-            if "?" in msg and "[1]" not in msg and len(msg) < 600:
+            if msg.startswith(CLARIFICATION_INTRO):
                 count += 1
         return count
 
@@ -250,8 +282,13 @@ class AgentPipeline:
                 TRIAGE_USER.format(conversation=conv_text), system=TRIAGE_SYSTEM
             )
             triage = parse_json_response(raw)
-            if triage.get("action") not in {"ask", "answer", "emergency"}:
+            if triage.get("action") not in {"ask", "answer", "emergency", "conversation"}:
                 raise ReviewUnavailable("Unable to assess this question. Please try again.")
+            if triage["action"] == "conversation":
+                kind = triage.get("conversation_kind")
+                if kind not in CONVERSATION_REPLIES:
+                    raise ReviewUnavailable("Unable to classify this message. Please try again.")
+                triage["conversation_kind"] = kind
             questions = triage.get("follow_up_questions", [])
             if not isinstance(questions, list) or any(not isinstance(q, str) or not q.strip() for q in questions):
                 raise ReviewUnavailable("Invalid clarification questions. Please try again.")

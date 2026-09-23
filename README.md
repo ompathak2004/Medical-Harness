@@ -2,7 +2,7 @@
 
 Ask a health question and get an evidence-grounded answer with source articles. OpenMed combines a FastAPI agent, clinical calculators, and an interactive 3D anatomy viewer in a single web application.
 
-**[Try the live app](https://medisearch-agent.vercel.app/)** · [How it works](docs/ARCHITECTURE.md) · [Contributing](CONTRIBUTING.md)
+**[Try the live app](https://medisearch-agent.vercel.app/)** · [How it works](docs/ARCHITECTURE.md) · [Reliability harness](docs/RELIABILITY.md) · [Contributing](CONTRIBUTING.md)
 
 > OpenMed provides educational information, not a diagnosis or a substitute for a clinician. For emergencies, contact local emergency services.
 

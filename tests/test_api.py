@@ -20,6 +20,10 @@ class FakePipeline:
         self.step_cache = TTLCache()
         self.evidence_cache = TTLCache()
 
+    def outcome_stats(self):
+        return {"conversation": 0, "follow_up": 0, "answer": 0,
+                "emergency": 0, "evidence_unavailable": 0}
+
     async def run(self, conversation, conversation_id):
         return {
             "type": "answer",
@@ -61,7 +65,7 @@ def test_metrics_numbers_only(client, monkeypatch):
     resp = client.get("/api/metrics", headers={"Authorization": "Bearer metrics-test"})
     assert resp.status_code == 200
     body = resp.json()
-    assert set(body) == {"llm", "step_cache", "evidence_cache"}
+    assert set(body) == {"llm", "step_cache", "evidence_cache", "outcomes"}
     llm = body["llm"]
     assert set(llm) == {
         "requests", "prompt_tokens", "completion_tokens",
@@ -86,6 +90,36 @@ def test_chat_valid(client):
     assert body["type"] == "answer"
     assert body["answer"] == "test answer"
     assert body["conversation_id"]
+
+
+def test_conversation_response_in_buffered_and_streaming_api(client):
+    class ConversationPipeline(FakePipeline):
+        async def run(self, conversation, conversation_id):
+            return {
+                "type": "conversation",
+                "answer": "Hi! What health question can I help you with?",
+                "evidence_status": "not_applicable",
+            }
+
+        async def run_streaming(self, conversation, conversation_id):
+            yield ("step", {"step": "triage", "message": "Understanding your question…"})
+            yield ("result", await self.run(conversation, conversation_id))
+
+    client.app.state.pipeline = ConversationPipeline()
+    buffered = client.post("/api/chat", json={"conversation": ["hi"]})
+    assert buffered.status_code == 200
+    assert buffered.json()["type"] == "conversation"
+    assert buffered.json()["articles"] == []
+
+    with client.stream("POST", "/api/chat/stream", json={"conversation": ["hi"]}) as streamed:
+        raw = "".join(streamed.iter_text())
+    assert streamed.status_code == 200
+    result = next(
+        json.loads(block.split("data: ", 1)[1])
+        for block in raw.split("\n\n") if block.startswith("event: result")
+    )
+    assert result["type"] == "conversation"
+    assert "event: answer_chunk" not in raw
 
 
 def test_chat_rejects_empty_conversation(client):

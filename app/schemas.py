@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -11,7 +13,7 @@ class ChatRequest(BaseModel):
 
 
 class ChatResponse(BaseModel):
-    type: str  # "follow_up" | "answer" | "emergency"
+    type: Literal["follow_up", "answer", "emergency", "conversation"]
     follow_up_questions: list[str] = []
     preliminary_info: str = ""
     answer: str | None = None
