@@ -7,7 +7,7 @@ import pytest
 from app.cache import TTLCache
 from app.evidence import EvidenceRetriever
 from app.pipeline import ReviewUnavailable, cache_scope
-from tests.test_pipeline import make_pipeline, collect, FakeEvidence, SAFETY_KEY, TRIAGE_KEY
+from tests.test_pipeline import make_pipeline, collect, FakeEvidence, SAFETY_KEY
 
 
 async def test_only_reviewed_revision_reaches_stream():
