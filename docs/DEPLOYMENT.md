@@ -34,6 +34,18 @@ Open the [project Analytics dashboard](https://vercel.com/pathakom890/medical-ha
 
 The app sends page views only. Its `beforeSend` filter reports the root URL without query parameters or fragments and rejects custom events. Chat questions, answers, calculator inputs, selected medical topics, and conversation IDs are not sent as analytics properties. The analytics service does not identify visitors by name. See [Vercel's setup](https://vercel.com/docs/analytics/quickstart) and [privacy documentation](https://vercel.com/docs/analytics/privacy-policy).
 
+## Deployment from GitHub Actions
+
+The `Deploy` workflow is manually dispatched and defaults to Preview. It calls the same CI workflow against the selected commit and deploys only after both check jobs pass. CI retains the original `test` check name as an aggregate gate for existing branch-protection rules. Production is restricted to `main`. Deployments to the same environment are serialized. The CLI is pinned, builds once, and uploads that build with `--prebuilt`; the checked-in frontend bundles have already been verified by CI.
+
+Create GitHub environments named `preview` and `production`. In each environment, set `VERCEL_TOKEN`, `VERCEL_ORG_ID`, and `VERCEL_PROJECT_ID` as secrets. Get the IDs from the existing local `.vercel/project.json` link and confirm they match the intended project. Provider keys remain in Vercel environment settings. Configure required reviewers and a `main` branch restriction on the production environment before using it.
+
+After the workflow is on the default branch, select **Actions → Deploy → Run workflow**, choose the branch and target, and review the deployment URL in the run summary. Check the deployed home page and `/api/health`; protected previews may need your Vercel session. The workflow does not make live medical-provider calls as a smoke test.
+
+This workflow does not disable Vercel's existing Git integration. Verify that integration before relying on these checks as the only deployment gate. If Git auto-deploy is enabled, a push can still deploy independently of this workflow; choose one deployment owner in project settings to avoid duplicate deployments. No remote secrets or hosting settings are changed by adding these files.
+
+See [Vercel's GitHub Actions guidance](https://vercel.com/docs/git/vercel-for-github#using-github-actions).
+
 ## Docker
 
 ```bash

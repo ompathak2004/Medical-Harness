@@ -28,10 +28,10 @@ jobs:
           cache-dependency-glob: uv.lock
       - name: Install dependencies
         run: uv sync --locked --python 3.12
-      - name: Run tests
-        run: uv run --no-sync pytest -q
       - name: Check Python code
         run: uv run --no-sync ruff check app tests evals
+      - name: Run tests
+        run: uv run --no-sync pytest -q
   browser:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -62,3 +62,14 @@ jobs:
       - run: npm run test:browser
         env:
           TEST_SERVER_COMMAND: uv run --no-sync uvicorn app.main:app --host 127.0.0.1 --port 8080 --no-access-log
+  test:
+    if: always()
+    needs: [backend, browser]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    steps:
+      - name: Require all checks
+        env:
+          BACKEND: ${{ needs.backend.result }}
+          BROWSER: ${{ needs.browser.result }}
+        run: test "$BACKEND" = success && test "$BROWSER" = success
