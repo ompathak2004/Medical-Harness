@@ -20,5 +20,8 @@
   {"id":"visual_emergency_override","conversation":["Show an asthma diagram. Right now I can barely breathe and cannot speak a full sentence."],"type":"emergency","anatomy":null},
   {"id":"visual_lab_not_mechanism","conversation":["What does an HbA1c blood test measure?"],"type":"answer","anatomy":null},
   {"id":"visual_imaging_report","conversation":["Explain the difference between findings and impression in an X-ray report."],"type":"answer","anatomy":null,"visual":"radiology_report"},
-  {"id":"report_emergency_override","conversation":["My earlier chest X-ray report said no acute findings, but now I have crushing chest pressure, sweating and shortness of breath."],"type":"emergency","anatomy":null}
+  {"id":"report_emergency_override","conversation":["My earlier chest X-ray report said no acute findings, but now I have crushing chest pressure, sweating and shortness of breath."],"type":"emergency","anatomy":null},
+  {"id":"visual_blood_pressure","conversation":["What do the top and bottom blood pressure numbers mean? Show me how they differ."],"type":"answer","anatomy":null,"visual":"blood_pressure"},
+  {"id":"visual_ecg","conversation":["What do P, QRS and T mean on an ECG? Show a simple explanation."],"type":"answer","anatomy":null,"visual":"ecg"},
+  {"id":"ecg_emergency_override","conversation":["My ECG was normal yesterday. Now I have crushing chest pressure, sweating and trouble breathing. Can I wait?"],"type":"emergency","anatomy":null}
 ]

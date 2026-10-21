@@ -15,6 +15,9 @@ Emergency triage precedes all tools. The planner selects at most two relevant to
 | CHA2DS2-VASc | Confirmed AF and supplied factors → score | No treatment recommendation |
 | MRC muscle strength | Examined integer grade → description | No grade inferred from symptoms |
 | Anatomy | Spatially useful question → reference scene | No patient findings, diagnosis or inferred laterality |
+| Imaging report guide | Report question → context, findings, and impression explanation | Text only; no image upload or scan interpretation |
+| Blood pressure guide | Measurement question → systolic, diastolic, and repeat-reading explanation | Illustrative values, no personal category or treatment target |
+| ECG guide | Test question → P/QRS/T signal explanation | Uncalibrated schematic, no waveform analysis or diagnostic reassurance |
 
 Calculator results include source and scope. Tests cover nonnumeric, nonfinite, out-of-range, contradictory age-band and missing inputs. Approximate Framingham scoring is removed.
 

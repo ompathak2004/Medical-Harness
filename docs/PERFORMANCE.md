@@ -6,7 +6,7 @@ Measured locally during the refactor. These are asset sizes and control-flow che
 | --- | --- |
 | Initial rendering | Home markup/layout arrives in HTML. Browser tests delay the module and verify the correct first screen and theme. |
 | Initial browser assets | App plus shared JS: about 34 KiB raw / 13 KiB gzip; CSS: about 26 / 6.5 KiB; theme bootstrap: 265 bytes. One self-hosted 29.4 KiB Instrument Sans WOFF2 adds consistent typography, down from the former 36.1 KiB font. No external font or 3D requests at startup. |
-| Eight educational guides | About 22 KiB raw / 8.4 KiB gzip for the renderer, content, and original SVG, imported only when opened. No WebGL, videos, or continuously running animation on page load. Small title metadata is shared with the app; the illustrated content remains lazy. |
+| Eleven educational guides | About 28.5 KiB raw / 10.8 KiB gzip for the renderer, content, and original SVG, imported only when opened. No WebGL, videos, or continuously running animation on page load. Small title metadata is shared with the app; the illustrated content remains lazy. |
 | Local time context | Deterministic server-clock and timezone conversion, no added model call. Minute-level temporal cache keys prevent stale relative dates but reduce cross-minute cache hits. |
 | 3D JavaScript | About 595 KiB raw / 153 KiB gzip, dynamically imported only when opening anatomy. |
 | Anatomy | One of twelve regional packs is fetched. Knee: 71 KiB, elbow: 139 KiB, hand: 232 KiB. Largest is chest, about 5 MiB; regional storage duplicates some structures and is not uniformly smaller than the former total. |

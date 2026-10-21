@@ -3,6 +3,7 @@ from typing import Literal, get_args
 VisualId = Literal[
     "eye_pressure", "asthma", "reflux", "kidney_stones", "gallstones",
     "osteoarthritis", "disc_nerve", "atherosclerosis", "radiology_report",
+    "blood_pressure", "ecg",
 ]
 VISUAL_IDS = frozenset(get_args(VisualId))
 

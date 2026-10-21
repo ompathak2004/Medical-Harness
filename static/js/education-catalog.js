@@ -1,4 +1,6 @@
 export const EDUCATION = {
+  blood_pressure: { title: 'Understanding blood pressure', launch: 'Explore the two numbers', subtitle: 'See systolic, diastolic, and repeat measurements', category: 'Heart and circulation' },
+  ecg: { title: 'What an ECG records', launch: 'Explore an ECG signal', subtitle: 'Separate electrical activity from a diagnosis', category: 'Heart tests' },
   radiology_report: { title: 'Understanding an imaging report', launch: 'Explore report sections', subtitle: 'Find the question, findings, and impression', category: 'X-rays and scans' },
   eye_pressure: { title: 'Understanding eye pressure', launch: 'How eye pressure works', subtitle: 'Explore fluid drainage and treatment goals', category: 'Eye health' },
   asthma: { title: 'How asthma affects an airway', launch: 'Inside an airway', subtitle: 'Compare an open airway with a narrowed one', category: 'Breathing' },
