@@ -89,6 +89,8 @@ Supported scene IDs are `head`, `neck`, `shoulder`, `chest`, `abdomen`, `pelvis`
 
 Calculator results include `tool`, `source`, `scope`, and a numeric score or value with units where applicable. Invalid supplied inputs yield an `error`; missing inputs never become assumed normal values. The approximate Framingham calculator has been removed. The new tools are adult CKD-EPI 2021 eGFR, estimated average glucose from HbA1c, and explicit measurement conversion.
 
+`non_hdl_cholesterol` accepts `total_cholesterol`, `hdl_cholesterol`, `total_units`, and `hdl_units` from the same lipid panel. Units must match and be `mg/dL` or `mmol/L`. The result contains `value` and `units` alongside source/scope metadata. It does not classify cardiovascular risk or supply a treatment target. HDL above total, mixed/unknown units, nonfinite or negative inputs, and total above 1,000 mg/dL or 30 mmol/L are rejected. Values are rounded to two decimal places.
+
 The default aggregate conversation limit is 32,000 characters and request body limit is 262,144 bytes. A request above either limit returns 413. The `result` event is authoritative. Incomplete provider streams, failed re-review, or missing/out-of-range citation indices produce an error instead of an answer. An unsafe draft can be revised once and must pass a separate second review. Protected metrics include the LLM `circuit_open` flag.
 
 ## Reference tools

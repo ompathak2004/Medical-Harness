@@ -41,7 +41,7 @@ Anatomy context belongs to each answer. Opening its native dialog imports the vi
 | app/context.py | Server clock, validated local context and per-turn time annotations |
 | app/pipeline.py, app/prompts.py | Bounded orchestration and reviewed answer policy |
 | app/cache.py, app/transport.py | TTL/LRU, single-flight and circuit breakers |
-| app/tools/clinical.py | Seven sourced calculators/converters |
+| app/tools/clinical.py | Eight sourced calculators/converters |
 | app/tools/references.py | DailyMed and Europe PMC lookups |
 | static/js/anatomy-panel.js, atlas-viewer.js | Dialog and on-demand Three.js viewer |
 | static/js/education.js, context.js, dialog.js | Sourced visual guide, local settings and dialog keyboard behavior |

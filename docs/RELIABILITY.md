@@ -10,6 +10,7 @@ Emergency triage precedes all tools. The planner selects at most two relevant to
 | Adult BMI | Age, height, weight → BMI and CDC category | Age 20+, not pediatric/pregnancy classification |
 | CKD-EPI 2021 eGFR | Adult age, equation sex, creatinine → eGFR | Stable creatinine; not AKI, pregnancy, CKD diagnosis or dosing |
 | Estimated average glucose | HbA1c percent → estimated mg/dL and mmol/L | Not current glucose or insulin dosing |
+| Non-HDL cholesterol | Total minus HDL, with explicit matching units → value and supplied units | Same panel only; no LDL estimate, risk category, target or medicine advice |
 | Measurement conversion | Value and conversion → value/units | Weight, height, temperature, glucose, creatinine; no drug doses |
 | Two-level Wells DVT | All criteria explicitly supplied → score and likelihood | Requires examination; cannot rule out a clot |
 | CHA2DS2-VASc | Confirmed AF and supplied factors → score | No treatment recommendation |
