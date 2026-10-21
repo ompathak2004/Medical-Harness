@@ -4,6 +4,7 @@ const nih = 'https://www.nhlbi.nih.gov/health';
 const digestive = 'https://www.niddk.nih.gov/health-information/digestive-diseases';
 const urinary = 'https://www.niddk.nih.gov/health-information/urologic-diseases';
 const joints = 'https://www.niams.nih.gov/health-topics';
+const radiology = 'https://www.radiologyinfo.org/en/info/all-about-your-radiology-report';
 const state = (name, title, text, source, label) => ({ name, title, text, source, label });
 const note = (title, text, source, label) => ({ title, text, source, label });
 const label = (x, y, text, anchor = 'start') => `<text x="${x}" y="${y}" text-anchor="${anchor}">${escapeHtml(text)}</text>`;
@@ -94,7 +95,26 @@ function artery(index) {
     ${index === 2 ? `<path class="guide-leader" d="M305 200L368 278"/>${label(372, 286, 'Clot')}` : ''}`);
 }
 
+function imagingReport(index) {
+  const sections = ['Exam and comparison', 'Findings', 'Impression'];
+  return frame('The sections of an imaging report', `A sample document highlights ${sections[index]}. The report separates exam context, observations, and the radiologist's summary. No patient findings are shown.`, `
+    <rect class="guide-tissue" x="64" y="16" width="392" height="294" rx="14"/>
+    ${label(260, 49, 'Anatomy of a report', 'middle')}
+    ${sections.map((title, row) => `<rect class="${row === index ? 'guide-soft' : 'guide-space'}" x="88" y="${70 + row * 73}" width="344" height="60" rx="8"/>${label(260, 107 + row * 73, title, 'middle')}`).join('')}`);
+}
+
 export const GUIDES = {
+  radiology_report: {
+    intro: 'Explore how a radiologist organizes a written report. This is a document guide, not a scan reader.', diagram: imagingReport,
+    caption: 'Example report structure · no patient findings',
+    footer: 'Original educational diagram informed by RadiologyInfo, from ACR, RSNA, and ASRT. This app explains text; it cannot inspect your images.',
+    states: [
+      state('Context', 'Start with the exam and comparison', 'The exam type and reason explain what was studied and why. The comparison section lists earlier images available to the radiologist. Missing earlier scans can limit what can be said about change.', radiology, 'RadiologyInfo · Report context'),
+      state('Findings', 'Findings describe what was seen', 'This section records observations in the areas examined. Words such as possible or likely express uncertainty. An observation is not automatically the cause of a symptom.', radiology, 'RadiologyInfo · Findings'),
+      state('Impression', 'The impression brings the findings together', 'The impression summarizes the key observations, possible explanations, and any recommended follow-up. Read it with the findings and discuss the next step with the clinician who ordered the test.', radiology, 'RadiologyInfo · Impression and follow-up'),
+    ],
+    note: note('What can I ask about my report?', 'You can paste the relevant wording without personal identifiers and ask what a term means. This app cannot examine an X-ray, CT, MRI, or ultrasound image, confirm a diagnosis, or replace the radiologist and your clinician.', radiology, 'RadiologyInfo · Discussing your results'),
+  },
   asthma: {
     intro: 'Compare the space inside an airway. Select a view to see what changes.', diagram: airway,
     states: [

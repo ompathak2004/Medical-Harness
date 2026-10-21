@@ -32,3 +32,4 @@ Every state of all seven additional guides is checked at desktop and 320 px mobi
 | Osteoarthritis | [View](media/guide-osteoarthritis-desktop-light.png) | [View](media/guide-osteoarthritis-mobile-dark.png) |
 | Disc and nerve | [View](media/guide-disc_nerve-desktop-light.png) | [View](media/guide-disc_nerve-mobile-dark.png) |
 | Arterial plaque | [View](media/guide-atherosclerosis-desktop-light.png) | [View](media/guide-atherosclerosis-mobile-dark.png) |
+| Imaging reports | [View](media/guide-radiology_report-desktop-light.png) | [View](media/guide-radiology_report-mobile-dark.png) |

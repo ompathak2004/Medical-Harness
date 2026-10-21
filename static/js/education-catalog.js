@@ -1,4 +1,5 @@
 export const EDUCATION = {
+  radiology_report: { title: 'Understanding an imaging report', launch: 'Explore report sections', subtitle: 'Find the question, findings, and impression', category: 'X-rays and scans' },
   eye_pressure: { title: 'Understanding eye pressure', launch: 'How eye pressure works', subtitle: 'Explore fluid drainage and treatment goals', category: 'Eye health' },
   asthma: { title: 'How asthma affects an airway', launch: 'Inside an airway', subtitle: 'Compare an open airway with a narrowed one', category: 'Breathing' },
   reflux: { title: 'Understanding acid reflux', launch: 'How reflux happens', subtitle: 'Follow the direction of stomach contents', category: 'Digestion' },

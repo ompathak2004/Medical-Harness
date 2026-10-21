@@ -26,7 +26,7 @@ class ChatResponse(BaseModel):
     followups: list[str] = []
     conversation_id: str
     anatomy_context: AnatomyContext | None = None
-    visual_context: VisualId | None = None
+    visual_context: VisualId | None = Field(default=None, description="Allowlisted educational guide, published only with a reviewed answer.")
     request_context: RequestContext | None = None
     evidence_status: str = "available"
     emergency: bool = False
