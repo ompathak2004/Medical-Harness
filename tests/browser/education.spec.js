@@ -32,6 +32,9 @@ for (const theme of ['light', 'dark']) {
       for (const [id, guide] of Object.entries(GUIDES)) {
         await answerWith(page, id);
         const trigger = page.getByRole('button', { name: EDUCATION[id].launch, exact: false });
+        if (id === 'ecg') {
+          await page.screenshot({ path: `docs/media/visual-launch-${size}-${theme}.png` });
+        }
         await trigger.click();
         const dialog = page.getByRole('dialog', { name: EDUCATION[id].title, exact: true });
         await expect(dialog).toBeVisible();

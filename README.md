@@ -22,6 +22,7 @@ Ask a health question and get an evidence-grounded answer with source articles. 
 - Explore sourced visual explanations of eye pressure, asthma, reflux, kidney stones, gallstones, joint changes, discs, and arterial plaque when relevant. These compare mechanisms rather than simulate your body.
 - Understand the sections of a written X-ray, CT, MRI, or ultrasound report. Paste relevant wording without personal identifiers; the app cannot inspect scan images.
 - Explore what blood pressure's two numbers mean and what an ECG records. The illustrations do not classify a personal reading or interpret a tracing.
+- Open the visual-guide button above a relevant answer to see its interactive illustration. For example, ask “Show a simple explanation of P, QRS and T on an ECG,” then select **Explore an ECG signal**.
 
 - Switch between light and dark themes on desktop or mobile. Try asking “How does eye pressure work?” or “Where is the kneecap and how does it move?”
 ## Run locally

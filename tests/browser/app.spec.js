@@ -139,7 +139,7 @@ test('source titles open original articles while details remain in the conversat
 });
 
 const eyeAnswer = {
-  type: 'answer', answer: '### Understanding your question\nThis synthetic example demonstrates how to explore eye-health information and its sources [1].\n\n### A useful next step\nThe visual below explains the purpose of different approaches. It does not choose a treatment for you [1].',
+  type: 'answer', answer: '### Understanding your question\nThis synthetic example demonstrates how to explore eye-health information and its sources [1].\n\n### A useful next step\nThe visual guide explains the purpose of different approaches. It does not choose a treatment for you [1].',
   articles: [{ title: 'Glaucoma and Eye Pressure', year: '2024', journal: 'National Eye Institute', authors: ['National Eye Institute'], url: 'https://www.nei.nih.gov/eye-health-information/eye-conditions-and-diseases/glaucoma/glaucoma-and-eye-pressure', tldr: 'A synthetic source-panel fixture. Open the original page to read its findings.' }],
   anatomy_context: null, visual_context: 'eye_pressure', tool_results: [], followups: [],
   request_context: { received_at: '2026-10-12T10:00:00+05:30', local_date: '2026-10-12', time_zone: 'Asia/Kolkata' },
