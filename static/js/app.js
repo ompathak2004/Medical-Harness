@@ -236,11 +236,11 @@ function finalizeAnswer(wrap, data, msgId) {
 
   const msgEl = wrap.querySelector('.msg.assistant');
   let html = `<div class="answer-eyebrow">${svg(ICON.book)}<span>${currentArticles.length ? 'An answer with sources' : 'Medical harness'}</span></div>`;
+  const guide = data.type === 'answer' && educationFor(data.visual_context);
+  if (guide) html += `<button type="button" class="visual-launch" data-action="open-education" data-guide="${escapeAttr(data.visual_context)}">${svg(data.visual_context === 'eye_pressure' ? ICON.eye : ICON.layers)}<span><strong>${escapeHtml(guide.launch)}</strong><small>${escapeHtml(guide.subtitle)}</small></span>${svg(ICON.arrowRight)}</button>`;
   html += `<div class="answer-body">${renderAnswerBody(data.answer || '', currentArticles, msgId)}</div>`;
   if (data.tool_results?.length) html += `<div class="answer-tools"><div class="section-eyebrow">Tools used</div>${data.tool_results.map(renderToolCard).join('')}</div>`;
   html += renderSourcesGrid(currentArticles, msgId);
-  const guide = data.type === 'answer' && educationFor(data.visual_context);
-  if (guide) html += `<button type="button" class="visual-launch" data-action="open-education" data-guide="${escapeAttr(data.visual_context)}">${svg(data.visual_context === 'eye_pressure' ? ICON.eye : ICON.layers)}<span><strong>${escapeHtml(guide.launch)}</strong><small>${escapeHtml(guide.subtitle)}</small></span>${svg(ICON.arrowRight)}</button>`;
   if (data.anatomy_context) html += anatomyToggleButtonHtml(data.anatomy_context, msgId);
   if ((data.answer || '').trim()) html += renderMsgActions(msgId);
   msgEl.innerHTML = html;

@@ -13,7 +13,9 @@ CONVERSATION_REPLIES = {
     "capabilities": (
         "I can explain health topics, help you understand symptoms and medical terms, "
         "and answer questions using medical sources. When you provide the necessary "
-        "details, I can also show certain clinical calculator results. I can't diagnose "
+        "details, I can also show certain clinical calculator results and visual guides. "
+        "You can paste report wording without names or identifiers for an explanation; "
+        "I cannot view X-rays or ECG images. I can't diagnose "
         "you or replace a clinician. What would you like to know?"
     ),
     "unclear": (

@@ -4,6 +4,10 @@ const nih = 'https://www.nhlbi.nih.gov/health';
 const digestive = 'https://www.niddk.nih.gov/health-information/digestive-diseases';
 const urinary = 'https://www.niddk.nih.gov/health-information/urologic-diseases';
 const joints = 'https://www.niams.nih.gov/health-topics';
+const radiology = 'https://www.radiologyinfo.org/en/info/all-about-your-radiology-report';
+const pressureTest = 'https://www.nhs.uk/tests-and-treatments/blood-pressure-test/';
+const pressureCare = 'https://www.nhs.uk/conditions/high-blood-pressure/';
+const ecgTest = 'https://medlineplus.gov/lab-tests/electrocardiogram/';
 const state = (name, title, text, source, label) => ({ name, title, text, source, label });
 const note = (title, text, source, label) => ({ title, text, source, label });
 const label = (x, y, text, anchor = 'start') => `<text x="${x}" y="${y}" text-anchor="${anchor}">${escapeHtml(text)}</text>`;
@@ -94,7 +98,76 @@ function artery(index) {
     ${index === 2 ? `<path class="guide-leader" d="M305 200L368 278"/>${label(372, 286, 'Clot')}` : ''}`);
 }
 
+function imagingReport(index) {
+  const sections = ['Exam and comparison', 'Findings', 'Impression'];
+  return frame('The sections of an imaging report', `A sample document highlights ${sections[index]}. The report separates exam context, observations, and the radiologist's summary. No patient findings are shown.`, `
+    <rect class="guide-tissue" x="64" y="16" width="392" height="294" rx="14"/>
+    ${label(260, 49, 'Anatomy of a report', 'middle')}
+    ${sections.map((title, row) => `<rect class="${row === index ? 'guide-soft' : 'guide-space'}" x="88" y="${70 + row * 73}" width="344" height="60" rx="8"/>${label(260, 107 + row * 73, title, 'middle')}`).join('')}`);
+}
+
+function bloodPressure(index) {
+  return frame('Two numbers in a blood pressure reading', ['The top number is highlighted: systolic pressure when the heart pumps.', 'The bottom number is highlighted: diastolic pressure between beats.', 'Both numbers belong to each reading. Repeated measurements help establish a pattern.'][index], `
+    <rect class="guide-tissue" x="106" y="22" width="308" height="230" rx="25"/>
+    <rect class="${index !== 1 ? 'guide-soft' : 'guide-space'}" x="130" y="49" width="260" height="73" rx="8"/>
+    <rect class="${index !== 0 ? 'guide-soft' : 'guide-space'}" x="130" y="136" width="260" height="73" rx="8"/>
+    ${label(154, 91, '120')}${label(252, 91, 'Systolic')}
+    ${label(154, 179, '80')}${label(252, 179, 'Diastolic')}
+    ${label(260, 236, 'Example only · mmHg', 'middle')}
+    ${label(260, 285, ['Heart pumps', 'Heart relaxes between beats', 'Record both numbers each time'][index], 'middle')}`);
+}
+
+function electrocardiogram(index) {
+  const parts = [
+    { name: 'P wave', x: 112, width: 70 },
+    { name: 'QRS', x: 213, width: 77 },
+    { name: 'T wave', x: 333, width: 91 },
+  ];
+  const part = parts[index];
+  return frame(`An illustrative ECG with the ${part.name} highlighted`, 'A schematic electrical signal has a small P wave, a sharp QRS complex, and a wider T wave. It has no calibrated time or voltage scale and cannot be used to judge a real tracing.', `
+    <rect class="guide-soft" x="${part.x}" y="60" width="${part.width}" height="194" rx="10"/>
+    <path class="guide-leader" d="M40 203H480"/>
+    <path class="guide-cartilage" stroke-width="4" d="M40 203H112Q132 202 140 182Q149 164 161 185Q170 203 187 203H213L231 218L248 79L265 242L280 203H333Q350 203 365 171Q379 145 397 177Q409 203 424 203H480"/>
+    ${parts.map(item => label(item.x + item.width / 2, 42, item.name, 'middle')).join('')}
+    ${label(260, 297, 'Electrical activity over time →', 'middle')}`);
+}
+
 export const GUIDES = {
+  blood_pressure: {
+    intro: 'A cuff reading contains two pressures. Select a number to see what it describes.', diagram: bloodPressure,
+    caption: 'Illustrative numbers · not your reading or a treatment target',
+    footer: 'Original educational diagram informed by NHS sources. A personal reading needs clinical context; thresholds and targets vary by setting and patient.',
+    states: [
+      state('Top number', 'Systolic: pressure as the heart pumps', 'The top number describes pressure when the heart pumps blood. Blood pressure is recorded in millimetres of mercury, written mmHg. The example is not a result from your body.', pressureTest, 'NHS · Blood pressure numbers'),
+      state('Bottom number', 'Diastolic: pressure between beats', 'The bottom number describes pressure while the heart relaxes between beats. Both numbers matter when a clinician reviews a reading.', pressureTest, 'NHS · Blood pressure numbers'),
+      state('Repeat readings', 'A pattern is more useful than one reading', 'Measurements may be repeated or recorded over several days or with a 24-hour monitor. Follow your clinician\'s and device\'s instructions and record both numbers. This illustration does not diagnose hypertension.', pressureCare, 'NHS · Confirming high blood pressure'),
+    ],
+    note: note('Can I tell from symptoms?', 'High blood pressure often causes no symptoms. Measurement is needed to detect it. Do not start, stop, or change a medicine based on this diagram.', pressureCare, 'NHS · Testing and treatment'),
+    caution: note('', 'Persistent chest pain, or chest pain with sweating or breathlessness, needs emergency help. Do not wait for another blood pressure reading.', pressureCare, 'NHS · Emergency symptoms'),
+  },
+  ecg: {
+    intro: 'Explore parts of a schematic electrical signal. This is not a tracing from a patient.', diagram: electrocardiogram,
+    caption: 'Uncalibrated schematic · not a diagnostic reference',
+    footer: 'Original educational diagram informed by MedlinePlus. The app cannot analyze an ECG image or waveform.',
+    states: [
+      state('P wave', 'The upper chambers activate', 'The P wave represents electrical activation of the upper heart chambers, called atria. An ECG records electrical activity through electrodes on the skin; it is not a picture of the heart.', ecgTest, 'MedlinePlus · ECG basics'),
+      state('QRS', 'The lower chambers activate', 'The QRS complex represents electrical activation of the lower chambers, called ventricles. Clinicians consider the whole recording, symptoms, and other information when interpreting a result.', ecgTest, 'MedlinePlus · Reading an ECG'),
+      state('T wave', 'The lower chambers recover electrically', 'The T wave represents the ventricles recovering electrically before the next beat. The shape here is illustrative, with no measured timing or voltage.', ecgTest, 'MedlinePlus · ECG signals'),
+    ],
+    note: note('Can one recording rule out a heart problem?', 'A short ECG records only a brief period. Intermittent symptoms may need longer monitoring. A normal-looking result does not explain away symptoms or replace clinical assessment.', ecgTest, 'MedlinePlus · Longer monitoring'),
+    caution: note('', 'Chest pressure with sweating or breathlessness needs emergency care, even after a reassuring earlier test.', pressureCare, 'NHS · Emergency symptoms'),
+  },
+  radiology_report: {
+    intro: 'Explore how a radiologist organizes a written report. This is a document guide, not a scan reader.', diagram: imagingReport,
+    caption: 'Example report structure · no patient findings',
+    footer: 'Original educational diagram informed by RadiologyInfo, from ACR, RSNA, and ASRT. This app explains text; it cannot inspect your images.',
+    states: [
+      state('Context', 'Start with the exam and comparison', 'The exam type and reason explain what was studied and why. The comparison section lists earlier images available to the radiologist. Missing earlier scans can limit what can be said about change.', radiology, 'RadiologyInfo · Report context'),
+      state('Findings', 'Findings describe what was seen', 'This section records observations in the areas examined. Words such as possible or likely express uncertainty. An observation is not automatically the cause of a symptom.', radiology, 'RadiologyInfo · Findings'),
+      state('Impression', 'The impression brings the findings together', 'The impression summarizes the key observations, possible explanations, and any recommended follow-up. Read it with the findings and discuss the next step with the clinician who ordered the test.', radiology, 'RadiologyInfo · Impression and follow-up'),
+    ],
+    note: note('What can I ask about my report?', 'You can paste the relevant wording without personal identifiers and ask what a term means. This app cannot examine an X-ray, CT, MRI, or ultrasound image, confirm a diagnosis, or replace the radiologist and your clinician.', radiology, 'RadiologyInfo · Discussing your results'),
+  },
   asthma: {
     intro: 'Compare the space inside an airway. Select a view to see what changes.', diagram: airway,
     states: [

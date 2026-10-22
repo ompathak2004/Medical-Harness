@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from app.tools.clinical import TOOL_REGISTRY, compute_bmi, compute_cha2ds2_vasc, compute_wells_dvt, compute_egfr, compute_estimated_glucose, compute_mrc_grade, compute_unit_conversion
+from app.tools.clinical import TOOL_REGISTRY, compute_bmi, compute_cha2ds2_vasc, compute_wells_dvt, compute_egfr, compute_estimated_glucose, compute_mrc_grade, compute_unit_conversion, compute_non_hdl_cholesterol
 
 
 def complete(key, **overrides):
@@ -78,3 +78,24 @@ def test_boolean_string_not_truthy():
 
 def test_approximate_framingham_removed():
     assert "framingham" not in TOOL_REGISTRY
+
+
+@pytest.mark.parametrize("total,hdl,units,expected", [(200, 50, "mg/dL", 150), (5.2, 1.3, "mmol/L", 3.9)])
+def test_non_hdl_preserves_supplied_units(total, hdl, units, expected):
+    result = compute_non_hdl_cholesterol({"total_cholesterol": total, "hdl_cholesterol": hdl,
+                                         "total_units": units, "hdl_units": units})
+    assert result["value"] == pytest.approx(expected)
+    assert result["units"] == units
+    assert not {"risk", "category", "recommendation"}.intersection(result)
+
+
+@pytest.mark.parametrize("overrides", [
+    {"hdl_units": "mmol/L"}, {"hdl_cholesterol": 250}, {"total_cholesterol": math.nan},
+    {"total_cholesterol": True}, {"total_cholesterol": -1}, {"total_units": "unknown"},
+    {"total_units": "mmol/L", "hdl_units": "mmol/L"},
+])
+def test_non_hdl_rejects_invalid_panels(overrides):
+    result = compute_non_hdl_cholesterol({"total_cholesterol": 200, "hdl_cholesterol": 50,
+                                         "total_units": "mg/dL", "hdl_units": "mg/dL", **overrides})
+    assert result["error"]
+    assert "value" not in result

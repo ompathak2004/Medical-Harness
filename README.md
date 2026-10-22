@@ -17,8 +17,12 @@ Ask a health question and get an evidence-grounded answer with source articles. 
 - Read an answer linked to medical source articles. If retrieval fails, the agent does not invent supporting sources.
 - Use adult BMI, CKD-EPI 2021 eGFR, estimated average glucose, measurement conversion, Wells DVT, CHA2DS2-VASc, and MRC muscle strength tools; see their [scope and limitations](docs/RELIABILITY.md) .
 - Find official US medicine label links and PubMed-indexed research abstracts when relevant.
+- Calculate non-HDL cholesterol from total and HDL values on the same lipid panel, in matching mg/dL or mmol/L units, without assigning a risk category.
 - Open a focused 3D reference scene when a spatial explanation helps the question. General questions download no 3D assets.
 - Explore sourced visual explanations of eye pressure, asthma, reflux, kidney stones, gallstones, joint changes, discs, and arterial plaque when relevant. These compare mechanisms rather than simulate your body.
+- Understand the sections of a written X-ray, CT, MRI, or ultrasound report. Paste relevant wording without personal identifiers; the app cannot inspect scan images.
+- Explore what blood pressure's two numbers mean and what an ECG records. The illustrations do not classify a personal reading or interpret a tracing.
+- Open the visual-guide button above a relevant answer to see its interactive illustration. For example, ask “Show a simple explanation of P, QRS and T on an ECG,” then select **Explore an ECG signal**.
 
 - Switch between light and dark themes on desktop or mobile. Try asking “How does eye pressure work?” or “Where is the kneecap and how does it move?”
 ## Run locally
@@ -86,21 +90,23 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow and pull req
 ```bash
 uv sync --locked
 uv run pytest -q
+uv run ruff check app tests evals
 npm ci --ignore-scripts
-npx playwright install chromium # Linux/macOS only; Windows tests use installed Google Chrome
-npm run check:anatomy
-After linking a project, validate a preview with `vercel deploy --target preview` before deploying production with `vercel deploy --prod`.
 npx playwright install chromium
-The app has no built-in user authentication; review the [deployment](docs/DEPLOYMENT.md) and [security](SECURITY.md) guidance before publishing it.
+npm run build
+npm run check:anatomy
 npm run test:browser
 ```
+Windows browser tests use installed Google Chrome. Linux and macOS use Playwright Chromium.
+
+The app has no built-in user authentication; review the [deployment](docs/DEPLOYMENT.md) and [security](SECURITY.md) guidance before publishing it.
 For UI changes, check desktop and mobile widths, both themes, keyboard navigation, and reduced-motion behavior.
 
 Commit rebuilt `static/dist/` and `static/build.json` alongside frontend source changes.
 
 Stop any existing development server on port 8080 before browser tests so Playwright starts its fake-key test server.
 
-Node 22+ is needed only to change or test the frontend. Self-hosted bundles and regional GLBs are checked in, so Python deployments do not need npm. Playwright automatically starts a local test server with fake provider keys.. CI checks the bundle is current and runs offline Python, geometry, and browser checks. Optional live evaluations require `--live`; see [the evaluation guide](docs/EVALUATION.md).
+Node 22+ is needed only to change or test the frontend. Self-hosted bundles and regional GLBs are checked in, so Python deployments do not need npm. Playwright always starts an isolated local test server with fake provider keys. CI runs Python checks and browser checks in parallel, caches locked dependencies, and cancels superseded runs. It rejects stale or untracked bundles. Optional live evaluations require `--live`; see [the evaluation guide](docs/EVALUATION.md).
 
 ## Deploy
 

@@ -1,0 +1,68 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Deployment environment
+        type: choice
+        options: [preview, production]
+        default: preview
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+  deploy:
+    needs: checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment:
+      name: ${{ inputs.target }}
+      url: ${{ steps.deploy.outputs.url }}
+    concurrency:
+      group: vercel-${{ inputs.target }}
+      cancel-in-progress: false
+    env:
+      TARGET: ${{ inputs.target }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - name: Check deployment configuration
+        run: |
+          test -n "$VERCEL_TOKEN" || { echo 'Set VERCEL_TOKEN in the GitHub environment.'; exit 1; }
+          test -n "$VERCEL_ORG_ID" || { echo 'Set VERCEL_ORG_ID in the GitHub environment.'; exit 1; }
+          test -n "$VERCEL_PROJECT_ID" || { echo 'Set VERCEL_PROJECT_ID in the GitHub environment.'; exit 1; }
+          if [ "$TARGET" = production ] && [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo 'Production deployments must run from main.'
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '22'
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          version: '0.13.0'
+          python-version: '3.12'
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install deployment CLI
+        run: npm install --global vercel@65.0.0 --no-audit --no-fund
+      - name: Load Vercel environment
+        run: vercel pull --yes --environment="$TARGET" --token="$VERCEL_TOKEN"
+      - name: Build once and deploy
+        id: deploy
+        run: |
+          flags=()
+          if [ "$TARGET" = production ]; then flags+=(--prod); fi
+          vercel build "${flags[@]}" --token="$VERCEL_TOKEN"
+          url=$(vercel deploy --prebuilt "${flags[@]}" --token="$VERCEL_TOKEN")
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          printf 'Deployed `%s` to [%s](%s)\n' "$GITHUB_SHA" "$TARGET" "$url" >> "$GITHUB_STEP_SUMMARY"

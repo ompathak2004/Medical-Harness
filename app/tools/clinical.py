@@ -116,6 +116,25 @@ def compute_estimated_glucose(data):
 
 
 @calculator(
+    "non_hdl_cholesterol", "Non-HDL Cholesterol",
+    "Calculate non-HDL as total cholesterol minus HDL from the same lipid panel. Require explicit total_cholesterol, hdl_cholesterol, total_units and hdl_units (mg/dL or mmol/L). Copy shared explicit units to both fields. Do not convert mixed units, estimate LDL, assign risk or recommend medication.",
+    {"total_cholesterol": (0.01, 1000), "hdl_cholesterol": (0, 1000),
+     "total_units": {"mg/dL", "mmol/L"}, "hdl_units": {"mg/dL", "mmol/L"}},
+    "https://medlineplus.gov/cholesterollevelswhatyouneedtoknow.html",
+    "Lab arithmetic only, using values from the same panel. Not an LDL measurement, cardiovascular risk estimate, treatment target or medication recommendation.",
+)
+def compute_non_hdl_cholesterol(data):
+    if data["total_units"] != data["hdl_units"]:
+        raise ValueError("Total and HDL cholesterol must use the same units.")
+    total, hdl = data["total_cholesterol"], data["hdl_cholesterol"]
+    if data["total_units"] == "mmol/L" and total > 30:
+        raise ValueError("Total cholesterol is outside the supported range; check the units.")
+    if hdl > total:
+        raise ValueError("HDL cholesterol cannot exceed total cholesterol; check the values and units.")
+    return {"value": round(total - hdl, 2), "units": data["total_units"]}
+
+
+@calculator(
     "unit_conversion", "Measurement Conversion", "Convert an explicitly given measurement and units using conversion: lb_to_kg, in_to_cm, f_to_c, glucose_mg_dl_to_mmol_l, or creatinine_umol_l_to_mg_dl. Never convert drug doses.",
     {"value": (-100, 100000), "conversion": {"lb_to_kg", "in_to_cm", "f_to_c", "glucose_mg_dl_to_mmol_l", "creatinine_umol_l_to_mg_dl"}},
     "https://www.nist.gov/pml/special-publication-811", "Measurement conversion only; interpretation requires clinical context.",

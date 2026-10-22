@@ -358,15 +358,22 @@ class TestDegradation:
 
 
 class TestToolFlow:
-    async def test_tool_selection_and_execution(self):
+    @pytest.mark.parametrize("tool,question,inputs,field,expected", [
+        ("bmi", "I am 30, weigh 70 kg and am 175 cm tall. What is my BMI?",
+         {"weight_kg": 70, "height_cm": 175, "age_years": 30}, "bmi", 22.9),
+        ("non_hdl_cholesterol", "My total cholesterol is 200 mg/dL and HDL is 50 mg/dL on the same panel. What is non-HDL?",
+         {"total_cholesterol": 200, "hdl_cholesterol": 50, "total_units": "mg/dL", "hdl_units": "mg/dL"}, "value", 150),
+    ])
+    async def test_tool_selection_and_execution(self, tool, question, inputs, field, expected):
         p = make_pipeline(
             {"action": "answer"},
-            tools={"selected_tools": ["bmi"]},
-            extract={"weight_kg": 70, "height_cm": 175, "age_years": 30},
+            tools={"selected_tools": [tool]},
+            extract=inputs,
         )
-        result = await p.run(["My weight is 70kg and height 175cm, what's my BMI?"], "cid")
-        assert result["tool_results"]
-        assert result["tool_results"][0]["tool"].lower().startswith("b")
+        result = await p.run([question], "cid")
+        assert result["tool_results"][0][field] == expected
+        assert result["tool_results"][0]["source"].startswith("https://")
+        assert result["tool_results"][0]["scope"]
 
 
 class TestPromptCacheLayout:

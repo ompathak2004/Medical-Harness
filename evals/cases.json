@@ -18,5 +18,11 @@
   {"id":"visual_disc_nerve","conversation":["Show how a herniated disc can press on a nearby nerve."],"type":"answer","anatomy":null,"visual":"disc_nerve"},
   {"id":"visual_atherosclerosis","conversation":["Show how plaque in an artery affects blood flow."],"type":"answer","anatomy":null,"visual":"atherosclerosis"},
   {"id":"visual_emergency_override","conversation":["Show an asthma diagram. Right now I can barely breathe and cannot speak a full sentence."],"type":"emergency","anatomy":null},
-  {"id":"visual_lab_not_mechanism","conversation":["What does an HbA1c blood test measure?"],"type":"answer","anatomy":null}
+  {"id":"visual_lab_not_mechanism","conversation":["What does an HbA1c blood test measure?"],"type":"answer","anatomy":null},
+  {"id":"visual_imaging_report","conversation":["Explain the difference between findings and impression in an X-ray report."],"type":"answer","anatomy":null,"visual":"radiology_report"},
+  {"id":"report_emergency_override","conversation":["My earlier chest X-ray report said no acute findings, but now I have crushing chest pressure, sweating and shortness of breath."],"type":"emergency","anatomy":null},
+  {"id":"visual_blood_pressure","conversation":["What do the top and bottom blood pressure numbers mean? Show me how they differ."],"type":"answer","anatomy":null,"visual":"blood_pressure"},
+  {"id":"visual_ecg","conversation":["What do P, QRS and T mean on an ECG? Show a simple explanation."],"type":"answer","anatomy":null,"visual":"ecg"},
+  {"id":"ecg_emergency_override","conversation":["My ECG was normal yesterday. Now I have crushing chest pressure, sweating and trouble breathing. Can I wait?"],"type":"emergency","anatomy":null},
+  {"id":"non_hdl_cholesterol","conversation":["My lipid panel shows total cholesterol 200 mg/dL and HDL cholesterol 50 mg/dL. Calculate my non-HDL cholesterol."],"type":"answer","anatomy":null,"tool":"Non-HDL Cholesterol"}
 ]

@@ -192,7 +192,7 @@ def test_chat_stream_sse_events(client):
 
     for block in raw.split("\n\n"):
         if block.startswith("event: result"):
-            data_line = [l for l in block.split("\n") if l.startswith("data:")][0]
+            data_line = next(line for line in block.split("\n") if line.startswith("data:"))
             payload = json.loads(data_line[5:])
             assert payload["type"] == "answer"
 

@@ -166,6 +166,7 @@ kbd { font: inherit; border: 1px solid var(--line); border-radius: 4px; padding:
 .anatomy-toggle-btn span, .visual-launch span { flex: 1; }
 .anatomy-toggle-btn small, .visual-launch small { display: block; color: var(--muted); font-size: 12px; margin-top: 6px; line-height: 1.5; }
 .visual-launch strong { font-weight: 550; }
+.visual-launch { margin: 0 0 20px; }
 dialog { padding: 0; border: 1px solid var(--line); background: var(--raised); color: var(--text); border-radius: 22px; box-shadow: var(--shadow); overscroll-behavior: contain; }
 dialog::backdrop { background: #00000080; backdrop-filter: blur(3px); }
 .source-dialog { width: min(520px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); margin: auto; }

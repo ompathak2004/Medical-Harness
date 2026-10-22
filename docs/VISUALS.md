@@ -21,7 +21,9 @@ The redesign also verifies direct citation opening, unchanged conversation width
 
 ## Mechanism guides
 
-Every state of all seven additional guides is checked at desktop and 320 px mobile widths in both themes. Titles, source links, diagram labels, overflow, focus restoration, older-answer topics, unknown IDs, and delayed imports after reset are covered. The following screenshots use synthetic answers; they show conceptual diagrams, not clinical scans.
+Every state of all ten additional guides is checked at desktop and 320 px mobile widths in both themes. Titles, source links, diagram labels, overflow, focus restoration, older-answer topics, unknown IDs, and delayed imports after reset are covered. The following screenshots use synthetic answers; they show conceptual diagrams, not clinical scans.
+
+The visual-guide button appears above the reviewed answer so it remains discoverable before long text and source lists. Selecting it opens the interactive illustration. The ECG launch state is captured on [desktop light](media/visual-launch-desktop-light.png), [desktop dark](media/visual-launch-desktop-dark.png), [mobile light](media/visual-launch-mobile-light.png), and [mobile dark](media/visual-launch-mobile-dark.png).
 
 | Topic | Desktop light | Narrow mobile dark |
 | --- | --- | --- |
@@ -32,3 +34,6 @@ Every state of all seven additional guides is checked at desktop and 320 px mobi
 | Osteoarthritis | [View](media/guide-osteoarthritis-desktop-light.png) | [View](media/guide-osteoarthritis-mobile-dark.png) |
 | Disc and nerve | [View](media/guide-disc_nerve-desktop-light.png) | [View](media/guide-disc_nerve-mobile-dark.png) |
 | Arterial plaque | [View](media/guide-atherosclerosis-desktop-light.png) | [View](media/guide-atherosclerosis-mobile-dark.png) |
+| Imaging reports | [View](media/guide-radiology_report-desktop-light.png) | [View](media/guide-radiology_report-mobile-dark.png) |
+| Blood pressure | [View](media/guide-blood_pressure-desktop-light.png) | [View](media/guide-blood_pressure-mobile-dark.png) |
+| ECG signals | [View](media/guide-ecg-desktop-light.png) | [View](media/guide-ecg-mobile-dark.png) |
