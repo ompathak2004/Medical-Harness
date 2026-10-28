@@ -4,7 +4,6 @@ import asyncio
 import logging
 import time
 import inspect
-import re
 from contextvars import ContextVar
 from collections import Counter
 from collections.abc import AsyncIterator
@@ -15,6 +14,7 @@ from app.config import get_settings
 from app.context import contextualize
 from app.conversation import CONVERSATION_REPLIES, routine_kind
 from app.evidence import EvidenceRetriever
+from app.handoff import TRACE_DETAILS, TRACE_STEPS, build_handoff, citation_indices, skipped_step
 from app.json_utils import parse_json_response
 from app.llm import CerebrasClient
 from app.prompts import (
@@ -43,7 +43,44 @@ CLARIFICATION_INTRO = (
 
 
 class ReviewUnavailable(RuntimeError):
-    pass
+    handoff: dict | None = None
+
+
+class _RunTrace:
+    """Per-run recorder: step names, statuses, and milliseconds only. Never text."""
+
+    def __init__(self):
+        self._started: dict[str, float] = {}
+        self._elapsed: dict[str, int] = {}
+        self._steps: dict[str, dict] = {}
+
+    def start(self, name: str) -> None:
+        self._started[name] = time.monotonic()
+
+    def stop(self, name: str) -> None:
+        if name in self._started and name not in self._elapsed:
+            self._elapsed[name] = int((time.monotonic() - self._started[name]) * 1000)
+
+    async def timed(self, name: str, awaitable):
+        """Await `awaitable` with the step clock running, whatever the outcome."""
+        self.start(name)
+        try:
+            return await awaitable
+        finally:
+            self.stop(name)
+
+    def finish(self, name: str, status: str, detail: str = "") -> None:
+        if detail not in TRACE_DETAILS:
+            raise ValueError("Trace detail must come from the fixed vocabulary")
+        self.stop(name)
+        self._steps[name] = {"name": name, "status": status,
+                             "elapsed_ms": self._elapsed.get(name, 0), "detail": detail}
+
+    def has(self, name: str, status: str) -> bool:
+        return self._steps.get(name, {}).get("status") == status
+
+    def steps(self) -> list[dict]:
+        return [self._steps.get(name) or skipped_step(name) for name in TRACE_STEPS]
 
 
 def _empty_result(**overrides) -> dict:
@@ -73,6 +110,7 @@ def _truncate(text: str, limit: int) -> str:
 
 class AgentPipeline:
     MAX_CLARIFICATIONS = 1
+    MAX_LABEL_SOURCES = 5
 
     def __init__(
         self,
@@ -125,125 +163,209 @@ class AgentPipeline:
     ) -> AsyncIterator[tuple[str, dict]]:
 
         t0 = time.monotonic()
-        conv_text = contextualize(conversation)
+        trace = _RunTrace()
+        tool_results: list[dict] = []
+        articles: list[dict] = []
 
-        yield ("step", {"step": "triage", "message": "Understanding your question…"})
-        triage = await self._triage(conv_text)
-        action = triage["action"]
-        if action == "emergency":
-            self._outcomes["emergency"] += 1
-            yield ("result", _empty_result(
-                type="emergency", emergency=True,
-                emergency_message="Your symptoms may need immediate medical attention. Contact your local emergency services now. Do not wait for an online answer.",
-                answer="If possible, ask someone nearby to stay with you and follow the emergency dispatcher's instructions.",
-            ))
-            return
+        def handoff(reason: str, **kwargs) -> dict:
+            return build_handoff(conversation, reason, trace.steps(), triage_done=trace.has("triage", "ok"), **kwargs)
 
+        try:
+            conv_text = contextualize(conversation)
 
-        conversation_kind = routine_kind(conversation[-1]) if len(conversation) == 1 else None
-        if conversation_kind is None and action == "conversation":
-            conversation_kind = triage["conversation_kind"]
-        if conversation_kind is not None:
-            self._outcomes["conversation"] += 1
-            yield ("result", _empty_result(
-                type="conversation",
-                answer=CONVERSATION_REPLIES[conversation_kind],
-                evidence_status="not_applicable",
-            ))
-            return
-
-
-        prior_asks = self._count_prior_clarifications(conversation)
-        if action == "ask" and triage.get("follow_up_questions"):
-            if prior_asks >= self.MAX_CLARIFICATIONS:
-                logger.info(
-                    "pipeline.clarification_limit reached (%d/%d), answering",
-                    prior_asks, self.MAX_CLARIFICATIONS,
-                )
-            else:
-                anatomy_context = select_anatomy(triage.get("anatomy"))
-                logger.info(
-                    "pipeline.follow_up elapsed=%.1fs",
-                    time.monotonic() - t0,
-                )
-                self._outcomes["follow_up"] += 1
+            yield ("step", {"step": "triage", "message": "Understanding your question…"})
+            trace.start("triage")
+            triage_info: dict = {}
+            try:
+                triage = await self._triage(conv_text, triage_info)
+            except ReviewUnavailable:
+                trace.finish("triage", "failed", triage_info.get("detail", "unavailable"))
+                raise
+            trace.finish("triage", "ok")
+            action = triage["action"]
+            if action == "emergency":
+                self._outcomes["emergency"] += 1
                 yield ("result", _empty_result(
-                    type="follow_up",
-                    follow_up_questions=triage["follow_up_questions"],
-                    preliminary_info=CLARIFICATION_INTRO,
-                    anatomy_context=anatomy_context,
+                    type="emergency", emergency=True,
+                    emergency_message="Your symptoms may need immediate medical attention. Contact your local emergency services now. Do not wait for an online answer.",
+                    answer="If possible, ask someone nearby to stay with you and follow the emergency dispatcher's instructions.",
+                    handoff=handoff("emergency"),
                 ))
                 return
 
 
-        yield ("step", {"step": "tools", "message": "Checking relevant tools and sources…"})
-        tool_results, evidence_result = await asyncio.gather(
-            self._run_tools(conv_text), self._retrieve_evidence(conversation, conversation_id)
-        )
-        evidence_result = dict(evidence_result)
-        papers = [item for result in tool_results if result.get("tool") == REFERENCE_TOOLS["pubmed_search"]["name"]
-                  for item in result.get("items", []) if item.get("tldr")]
-        if papers:
-            sources = list(evidence_result.get("articles", []))[:max(0, self.max_evidence_articles - len(papers))]
-            seen = {item.get("url") for item in sources}
-            evidence_result["articles"] = sources + [item for item in papers if item["url"] not in seen]
-            evidence_result["response"] = ""
-        evidence_result["articles"] = evidence_result.get("articles", [])[:self.max_evidence_articles]
-        if not evidence_result["articles"]:
-            self._outcomes["evidence_unavailable"] += 1
+            conversation_kind = routine_kind(conversation[-1]) if len(conversation) == 1 else None
+            if conversation_kind is None and action == "conversation":
+                conversation_kind = triage["conversation_kind"]
+            if conversation_kind is not None:
+                self._outcomes["conversation"] += 1
+                yield ("result", _empty_result(
+                    type="conversation",
+                    answer=CONVERSATION_REPLIES[conversation_kind],
+                    evidence_status="not_applicable",
+                    handoff=handoff("user_requested"),
+                ))
+                return
+
+
+            prior_asks = self._count_prior_clarifications(conversation)
+            clarification_limit = False
+            if action == "ask" and triage.get("follow_up_questions"):
+                if prior_asks >= self.MAX_CLARIFICATIONS:
+                    clarification_limit = True
+                    logger.info(
+                        "pipeline.clarification_limit reached (%d/%d), answering",
+                        prior_asks, self.MAX_CLARIFICATIONS,
+                    )
+                else:
+                    anatomy_context = select_anatomy(triage.get("anatomy"))
+                    logger.info(
+                        "pipeline.follow_up elapsed=%.1fs",
+                        time.monotonic() - t0,
+                    )
+                    self._outcomes["follow_up"] += 1
+                    yield ("result", _empty_result(
+                        type="follow_up",
+                        follow_up_questions=triage["follow_up_questions"],
+                        preliminary_info=CLARIFICATION_INTRO,
+                        anatomy_context=anatomy_context,
+                        handoff=handoff("clarification_pending", follow_up_questions=triage["follow_up_questions"]),
+                    ))
+                    return
+
+
+            yield ("step", {"step": "tools", "message": "Checking relevant tools and sources…"})
+            tools_info: dict = {}
+            evidence_info: dict = {}
+            tool_results, evidence_result = await asyncio.gather(
+                trace.timed("tools", self._run_tools(conv_text, tools_info)),
+                trace.timed("evidence", self._retrieve_evidence(conversation, conversation_id, evidence_info)),
+            )
+            if tools_info.get("failed"):
+                trace.finish("tools", "failed", "selection_failed")
+            elif not tools_info.get("selected"):
+                trace.finish("tools", "skipped")
+            elif len(tool_results) < tools_info["selected"] or any(
+                r.get("error") or r.get("status") == "unavailable" for r in tool_results
+            ):
+                trace.finish("tools", "fallback", "partial")
+            else:
+                trace.finish("tools", "ok", f"selected={tools_info['selected']}")
+
+            evidence_result = dict(evidence_result)
+            primary = list(evidence_result.get("articles", []))
+            extras = self._reference_sources(tool_results)
+            if extras:
+                # Label excerpts share one DailyMed URL per product, so resolve overlaps against the
+                # primary list first and only then allocate the remaining slots to primary sources.
+                extra_urls = {item["url"] for item in extras}
+                primary_kept = [item for item in primary if item.get("url") not in extra_urls]
+                sources = primary_kept[:max(0, self.max_evidence_articles - len(extras))]
+                evidence_result["articles"] = sources + extras
+                evidence_result["response"] = ""
+            evidence_result["articles"] = evidence_result.get("articles", [])[:self.max_evidence_articles]
+            articles = evidence_result["articles"]
+            if primary:
+                trace.finish("evidence", "ok")
+            elif articles:
+                trace.finish("evidence", "fallback", "reference_sources")
+            else:
+                trace.finish("evidence", "failed", "error" if evidence_info.get("error") else "empty")
+            if not articles:
+                self._outcomes["evidence_unavailable"] += 1
+                yield ("result", _empty_result(
+                    answer="I couldn’t retrieve supporting medical sources for this question. Please try again, or discuss your symptoms with a healthcare professional. If symptoms are severe or rapidly worsening, seek urgent care.",
+                    evidence_status="unavailable",
+                    handoff=handoff("evidence_unavailable", tool_results=tool_results),
+                ))
+                return
+
+
+            yield ("step", {"step": "generating", "message": "Writing your evidence-based answer…"})
+            trace.start("draft")
+            question = conv_text
+            answer_user = self._build_answer_user(question, tool_results, evidence_result)
+
+            answer_parts: list[str] = []
+            answer_chars = 0
+            over_budget = False
+            try:
+                async for chunk in self.llm.generate_stream(answer_user, system=ANSWER_SYSTEM):
+                    answer_parts.append(chunk)
+                    answer_chars += len(chunk)
+                    if answer_chars > self.max_answer_chars:
+                        over_budget = True
+                        raise ReviewUnavailable("Answer exceeded its budget")
+
+            except Exception as exc:
+                trace.finish("draft", "failed", "over_budget" if over_budget else "interrupted")
+                raise ReviewUnavailable("Answer generation was interrupted. Please try again.") from exc
+            answer = remove_source_appendix("".join(answer_parts))
+            if not answer.strip():
+                trace.finish("draft", "failed", "empty")
+                raise ReviewUnavailable("The answer was empty")
+            trace.finish("draft", "ok")
+
+
+            yield ("step", {"step": "safety", "message": "Verifying answer safety…"})
+            trace.start("review")
+            review_info: dict = {}
+            try:
+                answer = await self._safety_check(question, answer, evidence_result, tool_results, review_info)
+                self._validate_answer(answer, len(articles))
+            except ReviewUnavailable:
+                trace.finish("review", "failed", "attempts=2")
+                raise
+            if review_info.get("revised"):
+                trace.finish("review", "fallback", "revised_once")
+            else:
+                trace.finish("review", "ok")
+            visual_context = select_visual(triage.get("visual"))
+            anatomy_context = None if visual_context == "eye_pressure" else select_anatomy(triage.get("anatomy"))
+            yield ("answer_chunk", {"text": answer})
+
+            logger.info(
+                "pipeline.answer tools=%d articles=%d answer_chars=%d elapsed=%.1fs",
+                len(tool_results),
+                len(articles),
+                len(answer),
+                time.monotonic() - t0,
+            )
+            self._outcomes["answer"] += 1
+            if clarification_limit:
+                reason = "clarification_limit"
+            elif any("items" not in r and (r.get("missing_inputs") or r.get("error")) for r in tool_results):
+                reason = "tool_input_missing"
+            else:
+                reason = "answer_available"
             yield ("result", _empty_result(
-                answer="I couldn’t retrieve supporting medical sources for this question. Please try again, or discuss your symptoms with a healthcare professional. If symptoms are severe or rapidly worsening, seek urgent care.",
-                evidence_status="unavailable",
+                type="answer",
+                evidence_status="available",
+                answer=answer,
+                articles=articles,
+                tool_results=tool_results,
+                followups=evidence_result.get("followups", []),
+                anatomy_context=anatomy_context,
+                visual_context=visual_context,
+                handoff=handoff(reason, tool_results=tool_results, articles=articles, answer=answer),
             ))
-            return
+        except ReviewUnavailable as exc:
+            exc.handoff = handoff("review_unavailable", tool_results=tool_results, articles=articles)
+            raise
 
-
-        yield ("step", {"step": "generating", "message": "Writing your evidence-based answer…"})
-        question = conv_text
-        answer_user = self._build_answer_user(question, tool_results, evidence_result)
-
-        answer_parts: list[str] = []
-        answer_chars = 0
-        try:
-            async for chunk in self.llm.generate_stream(answer_user, system=ANSWER_SYSTEM):
-                answer_parts.append(chunk)
-                answer_chars += len(chunk)
-                if answer_chars > self.max_answer_chars:
-                    raise ReviewUnavailable("Answer exceeded its budget")
-
-        except Exception as exc:
-            raise ReviewUnavailable("Answer generation was interrupted. Please try again.") from exc
-        answer = remove_source_appendix("".join(answer_parts))
-        if not answer.strip():
-            raise ReviewUnavailable("The answer was empty")
-
-
-        yield ("step", {"step": "safety", "message": "Verifying answer safety…"})
-        answer = await self._safety_check(question, answer, evidence_result, tool_results)
-        self._validate_answer(answer, len(evidence_result["articles"]))
-        visual_context = select_visual(triage.get("visual"))
-        anatomy_context = None if visual_context == "eye_pressure" else select_anatomy(triage.get("anatomy"))
-        yield ("answer_chunk", {"text": answer})
-
-        logger.info(
-            "pipeline.answer tools=%d articles=%d answer_chars=%d elapsed=%.1fs",
-            len(tool_results),
-            len(evidence_result.get("articles", [])),
-            len(answer),
-            time.monotonic() - t0,
-        )
-        self._outcomes["answer"] += 1
-        yield ("result", _empty_result(
-            type="answer",
-            evidence_status="available",
-            answer=answer,
-            articles=evidence_result.get("articles", []),
-            tool_results=tool_results,
-            followups=evidence_result.get("followups", []),
-            anatomy_context=anatomy_context,
-            visual_context=visual_context,
-        ))
-
+    def _reference_sources(self, tool_results: list[dict]) -> list[dict]:
+        """Label sections first (capped), then PubMed abstracts: items carrying a `tldr` excerpt."""
+        pubmed = REFERENCE_TOOLS["pubmed_search"]["name"]
+        labels, papers = [], []
+        for result in tool_results:
+            for item in result.get("items", []):
+                if not item.get("tldr"):
+                    continue
+                if item.get("evidence_kind") == "label_section":
+                    labels.append(item)
+                elif result.get("tool") == pubmed:
+                    papers.append(item)
+        return labels[:self.MAX_LABEL_SOURCES] + papers
 
     def outcome_stats(self) -> dict[str, int]:
 
@@ -274,22 +396,29 @@ class AgentPipeline:
         cached = await self.step_cache.get_or_compute(key, wrapped)
         return None if cached is self._NONE_SENTINEL else cached
 
-    async def _retrieve_evidence(self, conversation: list[str], conversation_id: str) -> dict:
+    async def _retrieve_evidence(self, conversation: list[str], conversation_id: str, info: dict) -> dict:
         key = text_key("evidence-v5", cache_scope.get(), conversation_id, contextualize(conversation))
         async def compute():
-            if inspect.iscoroutinefunction(self.evidence.search):
-                return await self.evidence.search(conversation, conversation_id)
-            return await asyncio.to_thread(self.evidence.search, conversation, conversation_id)
+            try:
+                if inspect.iscoroutinefunction(self.evidence.search):
+                    return await self.evidence.search(conversation, conversation_id)
+                return await asyncio.to_thread(self.evidence.search, conversation, conversation_id)
+            except Exception:
+                logger.warning("pipeline.evidence failed")
+                info["error"] = True
+                return {"response": "", "articles": [], "followups": []}
         return await self.evidence_cache.get_or_compute(
             key, compute, cache_if=lambda value: bool(value.get("articles"))
         )
 
-    async def _triage(self, conv_text: str) -> dict:
+    async def _triage(self, conv_text: str, info: dict) -> dict:
         async def compute():
+            info["detail"] = "unavailable"
             raw = await self.llm.generate(
                 TRIAGE_USER.format(conversation=conv_text), system=TRIAGE_SYSTEM,
                 max_tokens=800, json_mode=True
             )
+            info["detail"] = "invalid_json"
             triage = parse_json_response(raw)
             if triage.get("action") not in {"ask", "answer", "emergency", "conversation"}:
                 raise ReviewUnavailable("Unable to assess this question. Please try again.")
@@ -311,7 +440,7 @@ class AgentPipeline:
         except Exception:
             raise ReviewUnavailable("Unable to assess this question safely. Please try again.") from None
 
-    async def _run_tools(self, conv_text: str) -> list[dict]:
+    async def _run_tools(self, conv_text: str, info: dict) -> list[dict]:
         async def compute():
             raw = await self.llm.generate(
                 TOOL_SELECTION_USER.format(conversation=conv_text),
@@ -326,9 +455,11 @@ class AgentPipeline:
             selection = await self._cached_step("tool_selection", conv_text, compute)
         except Exception:
             logger.warning("pipeline.tool_selection failed")
+            info["failed"] = True
             return []
 
         selected = list(dict.fromkeys(k for k in selection.get("selected_tools", []) if isinstance(k, str) and k in self.tools))[:2]
+        info["selected"] = len(selected)
         if not selected:
             return []
 
@@ -341,7 +472,10 @@ class AgentPipeline:
         )
 
         async def execute(tool_key, variables):
-            if variables is None or any(k not in variables for k in self.tools[tool_key]["variables"]):
+            if variables is None:
+                return None
+            incomplete = any(k not in variables for k in self.tools[tool_key]["variables"])
+            if incomplete and tool_key in REFERENCE_TOOLS:
                 return None
             try:
                 if tool_key in REFERENCE_TOOLS:
@@ -414,7 +548,7 @@ class AgentPipeline:
             )
         return text
 
-    async def _safety_check(self, question: str, answer: str, evidence: dict, tool_results=None) -> str:
+    async def _safety_check(self, question: str, answer: str, evidence: dict, tool_results=None, info: dict | None = None) -> str:
         articles = evidence.get("articles", [])[: self.max_evidence_articles]
         citations_text = self._format_evidence(evidence)
         if tool_results:
@@ -433,6 +567,8 @@ class AgentPipeline:
                     revised = remove_source_appendix(revised)
                     self._validate_answer(revised, len(articles))
                     candidate = revised
+                    if info is not None:
+                        info["revised"] = True
                     continue
             except Exception:
                 logger.warning("pipeline.safety unavailable")
@@ -442,8 +578,7 @@ class AgentPipeline:
     def _validate_answer(self, answer: str, source_count: int):
         if not answer.strip() or len(answer) > self.max_answer_chars:
             raise ReviewUnavailable("Invalid reviewed answer")
-        markers = re.findall(r"[\[【〔](\d+(?:\s*[,，]\s*\d+)*)[\]】〕]", answer)
-        references = [int(n.strip()) for marker in markers for n in re.split("[,，]", marker)]
+        references = citation_indices(answer)
         if not references or any(n < 1 or n > source_count for n in references):
             raise ReviewUnavailable("The reviewed answer has invalid citations")
 

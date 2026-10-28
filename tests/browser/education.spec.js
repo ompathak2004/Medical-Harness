@@ -94,3 +94,137 @@ test('a delayed guide import cannot reopen after a new question', async ({ page 
   await expect(page.locator('.education-dialog')).toHaveCount(0);
   await expect(page.locator('#hero')).toBeVisible();
 });
+
+const eyeGuideStates = ['Fluid flow', 'Less drainage', 'Laser', 'Surgery'];
+
+async function openEyeGuide(page) {
+  await page.goto('/');
+  await answerWith(page, 'eye_pressure');
+  await page.getByRole('button', { name: EDUCATION.eye_pressure.launch, exact: false }).click();
+  const dialog = page.getByRole('dialog', { name: EDUCATION.eye_pressure.title, exact: true });
+  await expect(dialog).toBeVisible();
+  return dialog;
+}
+
+const style = (locator, property) => locator.evaluate((el, name) => getComputedStyle(el)[name], property);
+const gaugeScale = locator => locator.evaluate(el => new DOMMatrix(getComputedStyle(el).transform).d);
+const dashOffset = locator => locator.evaluate(el => parseFloat(getComputedStyle(el).strokeDashoffset));
+
+test.describe('eye pressure guide motion with motion allowed', () => {
+  test.beforeEach(({ page }) => page.emulateMedia({ reducedMotion: 'no-preference' }));
+
+  test('Play and Pause gate the fluid animation and states keep the same diagram', async ({ page }) => {
+    const dialog = await openEyeGuide(page);
+    const dots = dialog.locator('.fluid-dots').first();
+    const play = dialog.locator('.motion-control');
+    await expect(play).toHaveText('Play fluid movement');
+    await expect(play).toHaveAttribute('aria-pressed', 'false');
+    expect(await style(dots, 'animationName')).toBe('none');
+    await expect(dialog.locator('.eye-diagram .pressure-gauge')).toHaveCount(1);
+    await expect(dialog.locator('.eye-diagram text', { hasText: 'Pressure' })).toHaveCount(1);
+    expect(await dialog.locator('.surgery-path').getAttribute('pathLength')).toBe('100');
+
+    await play.click();
+    await expect(play).toHaveAttribute('aria-pressed', 'true');
+    await expect(play).toHaveText('Pause fluid movement');
+    expect(await style(dots, 'animationName')).toBe('flow');
+
+    const svg = await dialog.locator('.eye-diagram').elementHandle();
+    for (const name of eyeGuideStates) {
+      await dialog.getByRole('button', { name, exact: true }).click();
+      expect(await svg.evaluate(node => node.isConnected)).toBe(true);
+    }
+    expect(await style(dots, 'animationName')).toBe('flow');
+
+    await play.click();
+    await expect(play).toHaveAttribute('aria-pressed', 'false');
+    await expect(play).toHaveText('Play fluid movement');
+    expect(await style(dots, 'animationName')).toBe('none');
+  });
+
+  test('each state shows its element: gauge, laser pulse, and surgery path', async ({ page }) => {
+    const dialog = await openEyeGuide(page);
+    const fill = dialog.locator('.pressure-fill');
+    const halo = dialog.locator('.laser-halo').first();
+    const beam = dialog.locator('.laser-beam');
+    const surgery = dialog.locator('.surgery-path');
+    const play = dialog.locator('.motion-control');
+    await play.click();
+
+    expect(await gaugeScale(fill)).toBe(0);
+    expect(await dashOffset(surgery)).toBe(100);
+    expect(await style(halo, 'opacity')).toBe('0');
+
+    await dialog.getByRole('button', { name: 'Less drainage', exact: true }).click();
+    await expect.poll(() => gaugeScale(fill)).toBe(1);
+    expect(await style(dialog.locator('.fluid-dots').first(), 'animationDuration')).toBe('4.5s');
+
+    await dialog.getByRole('button', { name: 'Laser', exact: true }).click();
+    expect(await style(beam, 'opacity')).toBe('1');
+    expect(await style(halo, 'animationName')).toBe('laser-pulse');
+    await play.click();
+    expect(await style(halo, 'animationName')).toBe('none');
+    expect(await style(halo, 'opacity')).toBe('1');
+
+    await dialog.getByRole('button', { name: 'Surgery', exact: true }).click();
+    await expect.poll(() => dashOffset(surgery)).toBe(0);
+    await expect.poll(() => gaugeScale(fill)).toBe(0);
+  });
+
+  test('guides that depend on the selected state crossfade on change', async ({ page }) => {
+    await page.goto('/');
+    await answerWith(page, 'asthma');
+    await page.getByRole('button', { name: /Inside an airway/ }).click();
+    const dialog = page.getByRole('dialog', { name: EDUCATION.asthma.title });
+    await expect(dialog.locator('.education-drawing')).toHaveClass(/is-entering/);
+    const second = GUIDES.asthma.states[1].name;
+    await dialog.getByRole('button', { name: second, exact: true }).click();
+    await expect(dialog.locator('.education-drawing')).toHaveClass(/is-entering/);
+    expect(await style(dialog.locator('.education-drawing > svg'), 'animationName')).toBe('guide-enter');
+    expect(await dialog.locator('.motion-control').count()).toBe(GUIDES.asthma.motion ? 1 : 0);
+  });
+});
+
+test.describe('eye pressure guide with reduced motion', () => {
+  test.beforeEach(({ page }) => page.emulateMedia({ reducedMotion: 'reduce' }));
+
+  test('the control is hidden, nothing animates, and every state still reads', async ({ page }) => {
+    const dialog = await openEyeGuide(page);
+    await expect(dialog.locator('.motion-control')).toBeHidden();
+    await dialog.evaluate(el => el.classList.add('playing'));
+    for (const selector of ['.fluid-dots', '.fluid-path', '.laser-halo']) {
+      expect(await style(dialog.locator(selector).first(), 'animationName')).toBe('none');
+    }
+    const fill = dialog.locator('.pressure-fill');
+    const surgery = dialog.locator('.surgery-path');
+    await dialog.getByRole('button', { name: 'Less drainage', exact: true }).click();
+    expect(await gaugeScale(fill)).toBe(1);
+    await dialog.getByRole('button', { name: 'Laser', exact: true }).click();
+    expect(await style(dialog.locator('.laser-halo').first(), 'opacity')).toBe('1');
+    expect(await style(dialog.locator('.laser-halo').first(), 'animationName')).toBe('none');
+    await dialog.getByRole('button', { name: 'Surgery', exact: true }).click();
+    expect(await dashOffset(surgery)).toBe(0);
+    await expect(dialog.locator('.education-copy')).toContainText('Creating or improving an exit for fluid');
+    await expect(dialog.locator('.eye-diagram')).toHaveAccessibleName(/.+/);
+  });
+});
+
+for (const theme of ['light', 'dark']) {
+  for (const [size, viewport] of [['desktop', { width: 1440, height: 1000 }], ['mobile', { width: 320, height: 740 }]]) {
+    test(`${size} ${theme}: eye guide states fit and keep their sources`, async ({ page }) => {
+      await page.setViewportSize(viewport);
+      await page.addInitScript(value => localStorage.setItem('medical-harness-theme', value), theme);
+      const dialog = await openEyeGuide(page);
+      for (const name of eyeGuideStates) {
+        await dialog.getByRole('button', { name, exact: true }).click();
+        await expect(dialog.locator('.education-copy a')).toHaveAttribute('href', /nei\.nih\.gov/);
+        expect(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+        expect(await dialog.locator('.eye-diagram').evaluate(el => [...el.querySelectorAll('text')].every(text => {
+          const bounds = text.getBBox();
+          return bounds.x >= 0 && bounds.x + bounds.width <= el.viewBox.baseVal.width && bounds.y >= 0 && bounds.y + bounds.height <= el.viewBox.baseVal.height;
+        }))).toBe(true);
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    });
+  }
+}

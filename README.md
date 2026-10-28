@@ -17,6 +17,9 @@ Ask a health question and get an evidence-grounded answer with source articles. 
 - Read an answer linked to medical source articles. If retrieval fails, the agent does not invent supporting sources.
 - Use adult BMI, CKD-EPI 2021 eGFR, estimated average glucose, measurement conversion, Wells DVT, CHA2DS2-VASc, and MRC muscle strength tools; see their [scope and limitations](docs/RELIABILITY.md) .
 - Find official US medicine label links and PubMed-indexed research abstracts when relevant.
+- Hand a summary to a clinician: open **Hand this to a clinician** under any answer, follow-up, emergency notice, or error to copy, print, or download your own words, calculator inputs, sources, limits, and three questions to ask. Nothing is stored or emailed.
+- See how an answer was made: a collapsible panel lists each step, its status, and which retrieved sources the answer cited. This is coverage, not verification of each claim.
+- Read official US label sections (boxed warning, indications, contraindications, warnings, adverse reactions) for a named medicine, and calculate pack-years and waist-to-height ratio from numbers you supply.
 - Calculate non-HDL cholesterol from total and HDL values on the same lipid panel, in matching mg/dL or mmol/L units, without assigning a risk category.
 - Open a focused 3D reference scene when a spatial explanation helps the question. General questions download no 3D assets.
 - Explore sourced visual explanations of eye pressure, asthma, reflux, kidney stones, gallstones, joint changes, discs, and arterial plaque when relevant. These compare mechanisms rather than simulate your body.

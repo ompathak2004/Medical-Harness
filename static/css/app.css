@@ -293,16 +293,31 @@ dialog::backdrop { background: #00000080; backdrop-filter: blur(3px); }
 .eye-diagram .drain-point { fill: var(--accent-soft); stroke: var(--brand); stroke-width: 3; }
 .eye-diagram .diagram-leader { stroke: var(--scroll); stroke-width: 1; }
 .eye-diagram text { fill: var(--muted); stroke: none; font: 17px 'Instrument Sans', sans-serif; }
-.eye-diagram .surgery-path { display: none; stroke: var(--focus); stroke-width: 5; }
+.eye-diagram .surgery-path { stroke: var(--focus); stroke-width: 5; stroke-linecap: butt; stroke-dasharray: 100; stroke-dashoffset: 100; }
+.eye-diagram .fluid-dots { stroke: var(--focus); stroke-width: 6; stroke-linecap: round; stroke-dasharray: 0 15; fill: none; opacity: .9; }
+.eye-diagram .pressure-gauge { fill: none; stroke: var(--scroll); stroke-width: 2; }
+.eye-diagram .pressure-fill { fill: var(--focus); stroke: none; opacity: .6; transform: scaleY(0); transform-box: fill-box; transform-origin: bottom; }
+.eye-diagram .laser-halo { fill: none; stroke: var(--focus); stroke-width: 4; opacity: 0; }
+.eye-diagram .laser-beam { fill: none; stroke: var(--focus); stroke-width: 3; stroke-dasharray: 6 6; opacity: 0; }
 [data-mode='pressure'] .eye-chamber { fill: #c7865133; }
 [data-mode='pressure'] .drain-point { fill: #d5915c; stroke: #ac653a; }
 [data-mode='pressure'] .fluid-path { stroke: #bc804a; }
 [data-mode='laser'] .drain-point { stroke-width: 7; }
-[data-mode='surgery'] .surgery-path { display: block; }
+[data-mode='surgery'] .surgery-path { stroke-dashoffset: 0; }
+[data-mode='pressure'] .pressure-fill { transform: scaleY(1); }
+[data-mode='laser'] .laser-halo, [data-mode='laser'] .laser-beam { opacity: 1; }
 .education-figure figcaption { font-size: 11px; color: var(--muted); text-align: center; }
 .motion-control { display: block; padding: 8px 12px; margin: 10px auto 20px; font-size: 12px; min-height: 40px; }
 .playing .fluid-path { animation: flow 1.5s linear infinite; }
 [data-mode='pressure'].playing .fluid-path { animation-duration: 4s; }
+.playing .fluid-dots { animation: flow 1.6s linear infinite; }
+[data-mode='pressure'].playing .fluid-dots { animation-duration: 4.5s; }
+.playing .pressure-fill { transition: transform .8s ease; }
+[data-mode='laser'].playing .laser-halo { animation: laser-pulse 1.2s ease-in-out infinite; }
+.playing .surgery-path { transition: stroke-dashoffset .9s ease; }
+@keyframes laser-pulse { 50% { stroke-width: 10; opacity: .35; } }
+.education-drawing.is-entering > svg { animation: guide-enter .18s ease-out; }
+@keyframes guide-enter { from { opacity: 0; } }
 @keyframes flow { to { stroke-dashoffset: -30; } }
 .education-copy h3 { font-size: 22px; font-weight: 550; letter-spacing: -.5px; margin: 12px 0; }
 .education-copy p:not(.section-eyebrow), .treatment-note p { font-size: 15px; line-height: 1.75; }
@@ -321,3 +336,51 @@ dialog::backdrop { background: #00000080; backdrop-filter: blur(3px); }
  .education-copy h3 { font-size: 21px; }
 }
 @media (prefers-reduced-motion: reduce) { .playing .fluid-path { animation: none; } .motion-control { display: none; } }
+
+.msg-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+.handoff-btn { min-height: 44px; padding: 8px 12px; border-color: var(--line); background: var(--raised); color: var(--text); font-weight: 550; }
+.handoff-btn:hover:not(:disabled) { background: var(--surface); }
+.emergency-body .msg-actions { margin-top: 14px; }
+.emergency-body .handoff-btn { color: inherit; border-color: currentColor; background: transparent; }
+.msg.system .msg-actions { clear: both; margin-top: 10px; }
+.trace-section { margin-top: 14px; border: 1px solid var(--line); border-radius: 14px; padding: 0 16px; background: var(--raised); }
+.trace-section summary { display: flex; align-items: center; gap: 8px; min-height: 44px; font-size: 13px; font-weight: 550; cursor: pointer; list-style: none; }
+.trace-section summary::-webkit-details-marker { display: none; }
+.trace-section summary::before { content: '\25B8'; color: var(--muted); }
+.trace-section[open] summary::before { content: '\25BE'; }
+.trace-rows { list-style: none; margin: 0; padding: 4px 0 12px; display: grid; gap: 6px; font-size: 13px; }
+.trace-row { display: grid; grid-template-columns: 76px minmax(0, 1fr) auto; gap: 12px; }
+.trace-status { color: var(--muted); overflow-wrap: anywhere; }
+.trace-status::before { content: '\25CF\00a0'; color: var(--brand); }
+.trace-status.fallback::before { content: '\25D0\00a0'; color: var(--muted); }
+.trace-status.skipped::before { content: '\25CB\00a0'; color: var(--scroll); }
+.trace-status.failed::before { content: '\25CF\00a0'; color: var(--danger); }
+.trace-ms { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+.trace-support { margin: 0; border-top: 1px solid var(--line); padding: 12px 0 14px; font-size: 13px; line-height: 1.6; }
+.trace-support small { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
+.handoff-dialog { width: min(640px, calc(100vw - 32px)); max-height: calc(100dvh - 40px); margin: auto; }
+.handoff-body { padding: 0 26px 24px; }
+.handoff-intro { color: var(--muted); font-size: 14px; line-height: 1.6; margin: 4px 0 16px; overflow-wrap: anywhere; }
+.handoff-notice { font-size: 13px; line-height: 1.6; padding: 12px 14px; border-radius: 12px; background: var(--danger-bg); color: var(--danger); margin: 0 0 16px; }
+.handoff-controls { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 18px; }
+.handoff-control { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 8px 14px; font-size: 13px; }
+.handoff-control svg { width: 16px; height: 16px; }
+.handoff-control.primary { background: var(--brand); color: var(--bg); border-color: var(--brand); }
+.handoff-control.primary:hover:not(:disabled) { background: var(--brand); opacity: .9; }
+.handoff-section { border-top: 1px solid var(--line); padding: 14px 0; }
+.handoff-section h3 { font-size: 12px; letter-spacing: .8px; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; font-weight: 550; }
+.handoff-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 14px; line-height: 1.65; }
+#handoff-print { display: none; }
+@media (max-width: 600px) {
+  .handoff-dialog { margin: auto 0 0; width: 100%; max-width: none; max-height: 94dvh; border-radius: 24px 24px 0 0; border-bottom: 0; padding-bottom: env(safe-area-inset-bottom); }
+  .handoff-body { padding: 0 18px 24px; }
+  .handoff-text { font-size: 13px; }
+  .trace-row { grid-template-columns: 64px minmax(0, 1fr) auto; gap: 8px; }
+}
+.clipboard-fallback { position: fixed; inset: 0 auto auto 0; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0; }
+@media print {
+  /* Only the handoff Print button adds .printing-handoff; native Ctrl/Cmd+P prints the normal page. */
+  body.printing-handoff > :not(#handoff-print) { display: none !important; }
+  body.printing-handoff { display: block; height: auto; background: #fff; color: #000; }
+  body.printing-handoff #handoff-print { display: block; white-space: pre-wrap; overflow-wrap: anywhere; font: 12pt/1.5 system-ui; color: #000; background: #fff; }
+}

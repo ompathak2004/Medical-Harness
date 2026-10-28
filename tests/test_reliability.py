@@ -59,7 +59,10 @@ async def test_missing_evidence_is_explicit_and_skips_answer_generation():
 async def test_missing_calculator_inputs_never_become_zero():
     pipeline = make_pipeline({"action": "answer"}, tools={"selected_tools": ["bmi"]}, extract={"weight_kg": 70})
     result = await pipeline.run(["I weigh 70kg"], "c")
-    assert result["tool_results"] == []
+    (tool_result,) = result["tool_results"]
+    assert tool_result["missing_inputs"] == ["height_cm", "age_years"]
+    assert "bmi" not in tool_result and "value" not in tool_result
+    assert result["handoff"]["reason"] == "tool_input_missing"
 
 
 async def test_browser_sessions_do_not_share_patient_cache_entries():

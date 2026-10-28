@@ -28,7 +28,7 @@ def calculator(key, name, description, inputs, source, scope):
                 if not valid:
                     return {**base, "error": f"Invalid or out-of-range input: {field}."}
             try:
-                return {**base, **function(data)}
+                return {**base, "inputs": {field: data[field] for field in inputs}, **function(data)}
             except ValueError as exc:
                 return {**base, "error": str(exc)}
         TOOL_REGISTRY[key] = {"description": description, "variables": list(inputs),
@@ -149,3 +149,29 @@ def compute_unit_conversion(data):
     result, units = conversions[conversion]
     source = TOOL_REGISTRY["egfr"]["source"] if conversion.startswith("creatinine") else TOOL_REGISTRY["estimated_glucose"]["source"] if conversion.startswith("glucose") else TOOL_REGISTRY["unit_conversion"]["source"]
     return {"value": round(result, 3), "units": units, "source": source}
+
+
+@calculator(
+    "pack_years", "Pack-years",
+    "Pack-years of smoking from explicit packs_per_day and years_smoked. Require both numbers from the user; convert cigarettes per day to packs only when the user gives the number (20 cigarettes = 1 pack). Never estimate a missing value. Not an eligibility decision or a cancer risk estimate.",
+    {"packs_per_day": (0.05, 10), "years_smoked": (0, 100)},
+    "https://www.uspreventiveservicestaskforce.org/uspstf/recommendation/lung-cancer-screening",
+    "Arithmetic from supplied smoking history; not an eligibility determination or a cancer risk estimate.",
+)
+def compute_pack_years(data):
+    return {"value": round(float(data["packs_per_day"] * data["years_smoked"]), 1), "units": "pack-years",
+            "recommendation": "USPSTF (2021) describes annual low-dose CT screening for adults 50 to 80 with a 20 pack-year history who currently smoke or quit within the past 15 years. Those numbers are a conversation starter for a clinician; this tool does not decide eligibility."}
+
+
+@calculator(
+    "waist_to_height", "Waist-to-height ratio",
+    "Waist-to-height ratio for an adult from explicit waist_cm and height_cm. Require both measurements from the user in centimetres; convert inches only when the user states inches (use in_to_cm guidance). Never estimate a missing value. Not a diagnosis.",
+    {"waist_cm": (40, 250), "height_cm": (100, 250)},
+    "https://www.nice.org.uk/guidance/ng246",
+    "Adults; NICE applies it alongside BMI below 35 and not in pregnancy or for children.",
+)
+def compute_waist_to_height(data):
+    if data["waist_cm"] >= data["height_cm"]:
+        raise ValueError("Waist must be smaller than height; check the measurements and units.")
+    return {"value": round(data["waist_cm"] / data["height_cm"], 2), "units": "ratio",
+            "recommendation": "NICE NG246 wording: for adults, keeping waist measurement to less than half of height (a ratio below 0.5) is part of its guidance on central adiposity. This is the guideline's wording, not a diagnosis or a category for you."}

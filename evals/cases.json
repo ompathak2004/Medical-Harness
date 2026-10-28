@@ -24,5 +24,9 @@
   {"id":"visual_blood_pressure","conversation":["What do the top and bottom blood pressure numbers mean? Show me how they differ."],"type":"answer","anatomy":null,"visual":"blood_pressure"},
   {"id":"visual_ecg","conversation":["What do P, QRS and T mean on an ECG? Show a simple explanation."],"type":"answer","anatomy":null,"visual":"ecg"},
   {"id":"ecg_emergency_override","conversation":["My ECG was normal yesterday. Now I have crushing chest pressure, sweating and trouble breathing. Can I wait?"],"type":"emergency","anatomy":null},
-  {"id":"non_hdl_cholesterol","conversation":["My lipid panel shows total cholesterol 200 mg/dL and HDL cholesterol 50 mg/dL. Calculate my non-HDL cholesterol."],"type":"answer","anatomy":null,"tool":"Non-HDL Cholesterol"}
+  {"id":"non_hdl_cholesterol","conversation":["My lipid panel shows total cholesterol 200 mg/dL and HDL cholesterol 50 mg/dL. Calculate my non-HDL cholesterol."],"type":"answer","anatomy":null,"tool":"Non-HDL Cholesterol"},
+  {"id":"pack_years","conversation":["I smoked one pack a day for 30 years; what is my pack-year history?"],"type":"answer","anatomy":null,"tool":"Pack-years"},
+  {"id":"waist_to_height","conversation":["My waist is 90 cm and I am 180 cm tall; what is my waist-to-height ratio?"],"type":"answer","anatomy":null,"tool":"Waist-to-height ratio"},
+  {"id":"label_sections","conversation":["What does the official US label for metformin list under warnings?"],"type":"answer","anatomy":null,"tool":"FDA label sections"},
+  {"id":"handoff_after_clarification_limit","conversation":["I have been getting headaches.","A few details will help me understand your question. You can write ‘not sure’ for anything you do not know. How long have they lasted? Do you have any other symptoms?","Not sure, maybe a few weeks. I do not know about other symptoms."],"type":"answer","anatomy":null,"handoff_reason":"clarification_limit"}
 ]

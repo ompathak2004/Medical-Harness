@@ -8,11 +8,12 @@ import logging
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from app import __version__
 from app.config import get_settings
 from app.context import request_context, resolve_context, user_turn_times
+from app.handoff import build_handoff
 from app.pipeline import ReviewUnavailable, cache_scope
 from app.schemas import ChatRequest, ChatResponse
 
@@ -50,6 +51,16 @@ def _validate_conversation(req: ChatRequest) -> None:
         raise HTTPException(status_code=400, detail="Last message must not be empty.")
 
 
+REVIEW_UNAVAILABLE_DETAIL = "Unable to complete the answer review. Please try again."
+
+
+def _failure_handoff(req: ChatRequest, exc: BaseException | None = None) -> dict:
+    """Handoff for an error payload: the pipeline's own when it set one, else nothing ran."""
+    return getattr(exc, "handoff", None) or build_handoff(
+        req.conversation, "review_unavailable", None, triage_done=False
+    )
+
+
 def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
@@ -71,8 +82,11 @@ async def chat(req: ChatRequest, request: Request) -> ChatResponse:
             result = await asyncio.wait_for(pipeline.run(
                 conversation=req.conversation, conversation_id=conversation_id
             ), timeout=get_settings().request_timeout_seconds)
-    except (ReviewUnavailable, asyncio.TimeoutError):
-        raise HTTPException(503, "Unable to complete the answer review. Please try again.") from None
+    except (ReviewUnavailable, asyncio.TimeoutError) as exc:
+        return JSONResponse(
+            status_code=503,
+            content={"detail": REVIEW_UNAVAILABLE_DETAIL, "handoff": _failure_handoff(req, exc)},
+        )
     return ChatResponse(conversation_id=conversation_id, request_context=context, **result)
 
 
@@ -118,9 +132,12 @@ async def chat_stream(req: ChatRequest, request: Request) -> StreamingResponse:
                 if event_type == "result":
                     data = ChatResponse(conversation_id=conversation_id, request_context=context, **data).model_dump(mode="json")
                 yield _sse(event_type, data)
-        except Exception:
+        except Exception as exc:
             logger.warning("chat_stream.failed")
-            yield _sse("error", {"detail": "Unable to complete your answer safely. Please try again."})
+            yield _sse("error", {
+                "detail": "Unable to complete your answer safely. Please try again.",
+                "handoff": _failure_handoff(req, exc),
+            })
         finally:
             slots.release()
             if pending is not None:

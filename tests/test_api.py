@@ -11,6 +11,13 @@ from app.main import create_app
 
 
 from app.cache import TTLCache
+from app.handoff import build_handoff
+from app.pipeline import ReviewUnavailable
+from app.schemas import Handoff
+
+
+def minimal_handoff(reason="answer_available"):
+    return build_handoff(["What is flu?"], reason, None, triage_done=True)
 
 
 class FakePipeline:
@@ -34,6 +41,7 @@ class FakePipeline:
             "anatomy_context": None,
             "emergency": False,
             "emergency_message": "",
+            "handoff": minimal_handoff(),
         }
 
     async def run_streaming(self, conversation, conversation_id):
@@ -102,6 +110,7 @@ def test_chat_valid(client):
     assert body["type"] == "answer"
     assert body["answer"] == "test answer"
     assert body["conversation_id"]
+    assert Handoff(**body["handoff"]).reason == "answer_available"
 
 
 @pytest.mark.parametrize("endpoint", ["/api/chat", "/api/chat/stream"])
@@ -135,6 +144,7 @@ def test_conversation_response_in_buffered_and_streaming_api(client):
                 "type": "conversation",
                 "answer": "Hi! What health question can I help you with?",
                 "evidence_status": "not_applicable",
+                "handoff": minimal_handoff("user_requested"),
             }
 
         async def run_streaming(self, conversation, conversation_id):
@@ -146,6 +156,7 @@ def test_conversation_response_in_buffered_and_streaming_api(client):
     assert buffered.status_code == 200
     assert buffered.json()["type"] == "conversation"
     assert buffered.json()["articles"] == []
+    assert buffered.json()["handoff"]["reason"] == "user_requested"
 
     with client.stream("POST", "/api/chat/stream", json={"conversation": ["hi"]}) as streamed:
         raw = "".join(streamed.iter_text())
@@ -155,6 +166,7 @@ def test_conversation_response_in_buffered_and_streaming_api(client):
         for block in raw.split("\n\n") if block.startswith("event: result")
     )
     assert result["type"] == "conversation"
+    assert result["handoff"]["reason"] == "user_requested"
     assert "event: answer_chunk" not in raw
 
 
@@ -195,6 +207,7 @@ def test_chat_stream_sse_events(client):
             data_line = next(line for line in block.split("\n") if line.startswith("data:"))
             payload = json.loads(data_line[5:])
             assert payload["type"] == "answer"
+            assert Handoff(**payload["handoff"]).version == 1
 
 
 def test_metrics_private_by_default(client):
@@ -244,3 +257,85 @@ def test_hashed_asset_cache_policy(client):
     assert 'immutable' in response.headers['cache-control']
     assert 'set-cookie' not in response.headers
     assert client.get('/static/assets/atlas/manifest.json').headers['cache-control'] == 'no-cache'
+
+
+class FailingPipeline(FakePipeline):
+    def __init__(self, error):
+        super().__init__()
+        self.error = error
+
+    async def run(self, conversation, conversation_id):
+        raise self.error
+
+    async def run_streaming(self, conversation, conversation_id):
+        yield ("step", {"step": "triage", "message": "Analyzing…"})
+        raise self.error
+
+
+def review_unavailable():
+    error = ReviewUnavailable("nope")
+    error.handoff = minimal_handoff("review_unavailable")
+    return error
+
+
+def sse_error(client):
+    with client.stream("POST", "/api/chat/stream", json={"conversation": ["What is flu?"]}) as response:
+        raw = "".join(response.iter_text())
+    block = next(b for b in raw.split("\n\n") if b.startswith("event: error"))
+    assert "event: result" not in raw
+    return json.loads(block.split("data: ", 1)[1])
+
+
+def test_review_unavailable_returns_503_with_handoff(client):
+    client.app.state.pipeline = FailingPipeline(review_unavailable())
+    response = client.post("/api/chat", json={"conversation": ["What is flu?"]})
+    assert response.status_code == 503
+    body = response.json()
+    assert body["detail"] == "Unable to complete the answer review. Please try again."
+    assert Handoff(**body["handoff"]).reason == "review_unavailable"
+    assert "answer" not in body
+
+    event = sse_error(client)
+    assert isinstance(event["detail"], str)
+    assert event["handoff"]["reason"] == "review_unavailable"
+    Handoff(**event["handoff"])
+
+
+def test_error_without_pipeline_handoff_gets_route_built_one(client):
+    client.app.state.pipeline = FailingPipeline(ReviewUnavailable("bare"))
+    body = client.post("/api/chat", json={"conversation": ["First", "reply", "Second"]}).json()
+    handoff = Handoff(**body["handoff"])
+    assert (handoff.reason, handoff.urgency) == ("review_unavailable", "unknown")
+    assert handoff.questions == ["First", "Second"]
+    assert [step.status for step in handoff.trace.steps] == ["skipped"] * 5
+    assert handoff.trace.claim_support is None
+
+    generic = FailingPipeline(RuntimeError("boom"))
+    client.app.state.pipeline = generic
+    event = sse_error(client)
+    assert Handoff(**event["handoff"]).urgency == "unknown"
+
+
+def test_timeout_returns_route_built_handoff(client, monkeypatch):
+    from app.config import get_settings
+    monkeypatch.setattr(get_settings(), "request_timeout_seconds", 0.05)
+
+    class Slow(FakePipeline):
+        async def run(self, conversation, conversation_id):
+            import asyncio
+            await asyncio.sleep(5)
+
+        async def run_streaming(self, conversation, conversation_id):
+            import asyncio
+            await asyncio.sleep(5)
+            yield ("step", {})
+
+    client.app.state.pipeline = Slow()
+    response = client.post("/api/chat", json={"conversation": ["What is flu?"]})
+    assert response.status_code == 503
+    assert isinstance(response.json()["detail"], str)
+    handoff = Handoff(**response.json()["handoff"])
+    assert (handoff.reason, handoff.urgency) == ("review_unavailable", "unknown")
+    assert {step.status for step in handoff.trace.steps} == {"skipped"}
+    event = sse_error(client)
+    assert Handoff(**event["handoff"]).reason == "review_unavailable"

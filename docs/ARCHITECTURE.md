@@ -6,7 +6,7 @@ medical-harness serves a FastAPI backend and plain HTML/CSS/JavaScript frontend.
 
 1. Routes validate alternating messages, body size, aggregate text size, rate and concurrency limits. They attach a random browser-session cache scope and enforce a total deadline. SSE sends keep-alives and cancels pending work on disconnect. Buffered and streamed results share ChatResponse validation.
 2. Triage runs first. Emergencies stop normal work and return fixed urgent guidance. Routine messages receive fixed nonclinical replies. Clarification asks up to three essential questions and is limited to one round. Anatomy intent is part of triage, eliminating a separate model call; only twelve validated scene IDs are accepted.
-3. Tool planning and MediSearch retrieval run concurrently. At most two relevant tools execute, with concurrent input extraction and reference requests. Calculators require supplied values and validate types, finite numbers, ranges and enums. Reference requests use fixed endpoints, eight-second total timeouts, at most three records, and a 256 KiB decoded response cap.
+3. Tool planning and MediSearch retrieval run concurrently. At most two relevant tools execute, with concurrent input extraction and reference requests. Calculators require supplied values and validate types, finite numbers, ranges and enums. Reference requests use fixed endpoints, eight-second total timeouts, at most three records, and a 256 KiB decoded response cap (openFDA labels: at most five rows under a 2 MiB cap).
 4. Supplemental PubMed abstracts may join the bounded source list or supply evidence when the primary provider is unavailable. Directory-only medicine labels cannot. When abstracts alter source numbering, the primary summary is dropped to avoid stale citation indices. No sources means a fixed evidence-unavailable response.
 5. Generation is buffered. Generation and both review attempts share the same bounded evidence text, including source metadata and excerpts. The retrieval summary is labeled context, never an independent source. Review also sees tool outputs. A revision is allowed once and must pass another review. Empty, interrupted, oversized or invalidly cited answers fail closed. The browser renders only the authoritative result.
 
@@ -40,12 +40,15 @@ Anatomy context belongs to each answer. Opening its native dialog imports the vi
 | app/api/routes.py, app/schemas.py | HTTP/SSE contract and validation |
 | app/context.py | Server clock, validated local context and per-turn time annotations |
 | app/pipeline.py, app/prompts.py | Bounded orchestration and reviewed answer policy |
+| app/handoff.py | Deterministic clinician handoff: reason, urgency, user questions, calculations, sources, limitations, fixed questions to ask, step trace |
 | app/cache.py, app/transport.py | TTL/LRU, single-flight and circuit breakers |
-| app/tools/clinical.py | Eight sourced calculators/converters |
-| app/tools/references.py | DailyMed and Europe PMC lookups |
+| app/tools/clinical.py | Ten sourced calculators/converters |
+| app/tools/references.py | DailyMed, openFDA label sections, and Europe PMC lookups |
 | static/js/anatomy-panel.js, atlas-viewer.js | Dialog and on-demand Three.js viewer |
 | static/js/education.js, context.js, dialog.js | Sourced visual guide, local settings and dialog keyboard behavior |
 | scripts/build_atlas.mjs, check_atlas.mjs | Reproducible packs and decoded geometry validation |
+| static/js/handoff.js | Lazy clinician-handoff dialog with Copy, Print, and Download |
 | evals/ | Synthetic evaluations and an offline review gate |
+| evals/failures.py, evals/doubles.py | Offline fault injection with doubles; generates docs/FAILURE_MODES.md |
 
 See [research decisions](RESEARCH.md), [tool boundaries](RELIABILITY.md), and [performance checks](PERFORMANCE.md).

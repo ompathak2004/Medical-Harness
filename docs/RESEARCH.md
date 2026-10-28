@@ -87,3 +87,55 @@ The [NHS blood pressure test guide](https://www.nhs.uk/tests-and-treatments/bloo
 [MedlinePlus ECG education](https://medlineplus.gov/lab-tests/electrocardiogram/) supports the signal overview and the limitations of a brief recording. The original ECG drawing has no diagnostic calibration and cannot be compared with a patient's tracing. The written-report policy applies to ECG results too. No upload service, new provider, or extra model call was added.
 
 The new non-HDL tool implements total cholesterol minus HDL, as defined by [MedlinePlus](https://medlineplus.gov/cholesterollevelswhatyouneedtoknow.html). Subtraction works directly in either supported unit, so there is no unit conversion or estimated LDL formula. Inputs must come from the same panel with matching explicit units. The tool rejects contradictions and implausibly large values as input errors, not as clinical categories. Treatment targets depend on patient context and are not computed here.
+
+## Clinician handoff, provenance, and failure testing (2026-10-25)
+
+Collected with web search and Firecrawl using generic queries. No patient text was used. These are engineering judgments about what to build, not clinical validation. Numbers are quoted from the cited papers and describe their samples, not this application's users.
+
+### Demand: what people ask health chatbots
+
+- [Nature Health 2026](https://www.nature.com/articles/s44360-026-00117-x) analyzed 617,827 de-identified consumer AI health conversations. About 41% sought health information or education; personal symptom assessment was nearly one in five conversations; one in seven personal queries concerned someone else; personal queries peaked at night, when care is hardest to reach.
+- [Ayre, Cvejic and McCaffery, MJA 2025](https://www.mja.com.au/journal/2025/222/4/use-chatgpt-obtain-health-information-australia-2024-insights-nationally) surveyed 2,034 Australian adults. Among ChatGPT health users, 48% asked about a specific condition, 37% about symptoms, 36% what action to take, 35% to explain medical terms, and 8.6% to interpret test results. Many of these questions end with a clinician, not with the chatbot.
+- [Yun and Bickmore, JMIR 2025;27:e68560](https://www.jmir.org/2025/1/e68560/): 90.2% of 297 surveyed users searched online for information about conditions or symptoms.
+
+### Pain points
+
+- [JAMA Network Open 2023](https://jamanetwork.com/journals/jamanetworkopen/fullarticle/2802672) (8,139 patients at four US academic centers): 96% preferred immediate online release of results, yet 7.5% said viewing results before hearing from a clinician increased worry, and a related national analysis found only about two thirds understood what released results meant. Patients want plain-language explanation, context, and a next step.
+- Symptom-checker user studies ([PMC8075525](https://pmc.ncbi.nlm.nih.gov/articles/PMC8075525/), [PMC10874001](https://pmc.ncbi.nlm.nih.gov/articles/PMC10874001/), [PMC10148318](https://pmc.ncbi.nlm.nih.gov/articles/PMC10148318/), and JMIR Human Factors 2020 e19713) report questionnaire fatigue, badly sequenced questions, vague outputs, a generic "see a doctor" with no actionable next step, no follow-up guidance, and anxiety from alarming results.
+- Press and forum accounts describe confidently wrong answers, fabricated or unverifiable citations, false reassurance, and clinicians dismissing AI-written patient notes. Patients report chatbots as most useful for translating terms, preparing questions, and organizing what to tell a doctor. These are anecdotes, not measured rates; they shaped two choices: the handoff contains the person's own words plus structured data and never the AI's answer prose, and it ends in questions to ask, not advice.
+
+### What the evidence supports
+
+- Question prompt lists are low-risk. A [systematic review of 51 randomized trials](https://academic.oup.com/book/26485/chapter/194937904) of pre-consultation interventions found small but significant increases in questions asked and patient participation, without longer consultations and without consistent effects on anxiety or knowledge. A 2025 meta-analysis of 14 cancer studies reached a similar conclusion. The handoff's "Questions to ask" section follows this structure.
+- [AHRQ Question Builder](https://www.ahrq.gov/questions/question-builder/index.html) and [IHI Ask Me 3](https://www.ihi.org/library/tools/ask-me-3-good-questions-your-good-health) (What is my main problem? What do I need to do? Why is it important?) provide the heading structure. The questions are fixed strings in `app/handoff.py`; only the calculator name and value and the source count are substituted, so message text can never leak into them.
+- [SourceCheckup, Nature Communications 2025](https://www.nature.com/articles/s41467-025-58551-6) (800 questions, about 58,000 statement-source pairs) found that for GPT-4o with retrieval, source URLs were valid 100% of the time but only 75.7% of statements were supported. A valid link is not claim support. The "How this answer was made" panel therefore reports claim support as citation coverage (which retrieved sources the reviewed answer cited) and says it is coverage, not verification.
+- [HealthBench](https://openai.com/index/healthbench/) reports context seeking and emergency referral among the weakest axes for current models, which supports keeping the emergency screen first and the one-round clarification fixed.
+- Abstention and deferral work ([UncertaiNLP 2025, "Do LLMs know when not to answer in medical QA"](https://aclanthology.org/2025.uncertainlp-main.4/); [NeurIPS 2025 cascaded human-AI decision making](https://neurips.cc/virtual/2025/loc/san-diego/poster/119942); [PMC12484644](https://pmc.ncbi.nlm.nih.gov/articles/PMC12484644/), an implementation review of conversational AI) mostly studies when a model should stop. Little of it specifies the operational handoff: context, sources, uncertainty, and urgency passed to a person. The implementation review recommends explicit escalation pathways and structured handoff information. The handoff object is that artifact, assembled deterministically with no extra model call and no storage.
+
+### openFDA label sections
+
+The [openFDA drug label API](https://open.fda.gov/apis/drug/label/) needs no key (40 requests per minute and 1,000 per day per IP; 240 per minute and 120,000 per day with a free key). Labels arrive as arrays of section strings. A probe on 2026-10-25 for `generic_name:"metformin"` returned a sitagliptin plus metformin combination product first among 355 labels. A combination product is not the same medicine, so quoting it as "the metformin label" would mislead.
+
+Selection rule, implemented in `app/tools/references.py`: request labels by generic name sorted by effective date (brand name only after a 404); keep single-ingredient rows whose name matches the query as a whole word; prefer an exact match, then the newest row; discard rows without a valid set ID. If rows exist but only combinations match, return an empty result flagged `combination_only`, show nothing from the label, and say so in the handoff. The exact product name and its DailyMed link are always shown. The interactions section is reported as present or absent and never quoted, so the tool cannot be read as an interaction check. A 429 counts as a failure toward the circuit breaker, and an optional `OPENFDA_API_KEY` raises the limit.
+
+### MediSearch tier
+
+MediSearch's [terms of use](https://medisearch.io/terms) are informational-use terms with no clause restricting API embedding. Its [developer pricing](https://medisearch.io/developers/docs) lists a Free tier described as for testing and development, a Production tier described as for production applications, and an Enterprise tier with compliance and service-level commitments. The conclusion: use the Production tier for real users and keep the free tier for development. Get written confirmation of terms before handling real patient data at scale. The terms disclaim accuracy, which is one more reason the application keeps its own review gate.
+
+### Tools considered and excluded
+
+| Candidate | Why it is not included |
+| --- | --- |
+| PHQ-9 and GAD-7 self-scoring | A scored severity band needs clinician interpretation and a crisis pathway. The application has only its emergency screen; a score in a chat can do harm without that pathway. |
+| Drug interaction checking | Needs an authoritative interaction dataset and clinical evaluation. Label text is not an interaction check; the label tool deliberately does not quote the interactions section. |
+| Dosing calculators | Patient-specific and high consequence, with no authoritative, validated data source in this application. |
+| Lab reference ranges | Ranges depend on the laboratory and population; a generic table would misclassify results. |
+| Email delivery of the summary | Would send patient text through a third party or require storing it. Copy, Print, and Download keep the text on the device. |
+| Voice agents | A different product surface with new safety and latency risks; no patient-information need in the research pointed to it. |
+| A lab-report visual guide | Lab reports vary by laboratory, and the value is in the handoff and the existing written-report guide, not another diagram. |
+
+Pack-years and waist-to-height were added instead: both are arithmetic on explicitly supplied numbers, cite a public source, and return the guideline's wording as a conversation starter for a clinician, not a category or an eligibility decision. Sources: [USPSTF lung cancer screening](https://www.uspreventiveservicestaskforce.org/uspstf/recommendation/lung-cancer-screening) and [NICE NG246](https://www.nice.org.uk/guidance/ng246).
+
+### Market context and naming rule
+
+A business-to-business pharma engagement product was also reviewed for transferable ideas: a structured handoff to a human, escalation pathways, auditability of each answer, and benchmark-driven evaluation. Its voice agents, pharma CRM integration, and market-simulation features are out of scope for a patient-information application. No third-party startup or company that was reviewed only as market context is named anywhere in this repository (code, docs, tests, or commit messages). Only standards bodies, journals, government sources, and the application's existing providers are named.

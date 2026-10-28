@@ -5,7 +5,7 @@ import { initTheme, toggleTheme } from './theme.js';
 import {
   escapeHtml, escapeAttr, renderMarkdown, renderAnswerBody, safeUrl,
   copyToClipboard, rafThrottle, riskTone, TOOL_FIELD_LABELS,
-  toolCardRows, toolHeadline,
+  toolCardRows, toolHeadline, inputsText, claimSupportText,
 } from './dom-utils.js';
 import { AnatomyPanel } from './anatomy-panel.js';
 import { educationFor } from './education-catalog.js';
@@ -94,7 +94,19 @@ function appendStep(wrap, message) {
   if (ctr) ctr.innerHTML = `<div class="step-item active" role="status"><span class="step-spinner"></span><span>${escapeHtml(message)}</span></div>`;
 }
 
-function systemErrorMessage(text, retryText) {
+function handoffButtonHtml(msgId) {
+  return `<button type="button" class="msg-action-btn handoff-btn" data-action="open-handoff" data-msg-id="${escapeAttr(msgId)}">${svg(ICON.clipboard)}Hand this to a clinician</button>`;
+}
+
+function registerHandoff(msgId, handoff, receivedAt) {
+  if (!handoff || typeof handoff !== 'object' || Array.isArray(handoff)) return false;
+  messageHandoff.set(msgId, { handoff, receivedAt: receivedAt || null });
+  return true;
+}
+
+function systemErrorMessage(text, retryText, handoff) {
+  const errorMsgId = handoff ? nextMsgId() : null;
+  const hasHandoff = errorMsgId && registerHandoff(errorMsgId, handoff, pendingTurnTime);
   const wrap = document.createElement('div');
   wrap.className = 'msg system';
   wrap.innerHTML = `
@@ -102,11 +114,12 @@ function systemErrorMessage(text, retryText) {
     <div class="system-title">Something went wrong</div>
     ${escapeHtml(text)}
     ${retryText ? `<div><button type="button" class="retry-btn" data-action="retry" data-value="${escapeAttr(retryText)}">${svg(ICON.retry)}Try again</button></div>` : ''}
+    ${hasHandoff ? `<div class="msg-actions">${handoffButtonHtml(errorMsgId)}</div>` : ''}
   `;
   appendToChat(wrap);
 }
 
-function renderEmergencyBanner(data) {
+function renderEmergencyBanner(data, msgId) {
   const wrap = document.createElement('div');
   const guidance = (data.answer || '').trim();
   wrap.innerHTML = `
@@ -117,6 +130,7 @@ function renderEmergencyBanner(data) {
         <div class="emergency-message">${escapeHtml(data.emergency_message || 'Your symptoms may indicate a medical emergency.')}</div>
         <div class="emergency-callout">${svg(ICON.phone)}Call your local emergency number right away</div>
         ${guidance ? `<div class="emergency-guidance">${renderMarkdown(guidance)}</div>` : ''}
+        ${messageHandoff.has(msgId) ? `<div class="msg-actions">${handoffButtonHtml(msgId)}</div>` : ''}
       </div>
     </div>`;
   appendToChat(wrap.firstElementChild);
@@ -155,6 +169,7 @@ function renderToolCard(tr) {
       <div class="tool-card-name">${escapeHtml(tr.tool || 'Clinical calculator')}</div>
       ${riskBadge}
       ${rowsHtml}
+      ${inputsText(tr.inputs) ? `<div class="tool-card-row"><strong>Inputs as supplied:</strong> ${escapeHtml(inputsText(tr.inputs))}</div>` : ''}
       ${tr.recommendation ? `<div class="tool-card-recommendation">${escapeHtml(tr.recommendation)}</div>` : ''}
       ${safeUrl(tr.source) ? `<a class="tool-source" href="${escapeAttr(safeUrl(tr.source))}" target="_blank" rel="noopener noreferrer">Calculator reference ↗</a>` : ''}
       ${tr.error ? `<div class="tool-card-recommendation">${escapeHtml(tr.error)}</div>` : ''}
@@ -201,14 +216,29 @@ function renderFollowupChips(followups) {
   appendToChat(sec);
 }
 
-function renderMsgActions(msgId) {
+function renderMsgActions(msgId, { copy = true } = {}) {
+  const handoff = messageHandoff.has(msgId) ? handoffButtonHtml(msgId) : '';
+  if (!copy && !handoff) return '';
   return `<div class="msg-actions">
-    <button type="button" class="msg-action-btn" data-action="copy-answer" data-msg-id="${escapeAttr(msgId)}">${svg(ICON.copy)}Copy</button>
+    ${handoff}
+    ${copy ? `<button type="button" class="msg-action-btn" data-action="copy-answer" data-msg-id="${escapeAttr(msgId)}">${svg(ICON.copy)}Copy</button>` : ''}
   </div>`;
+}
+
+function renderTraceSection(handoff) {
+  const steps = Array.isArray(handoff?.trace?.steps) ? handoff.trace.steps : [];
+  if (!steps.length) return '';
+  const support = claimSupportText(handoff.trace.claim_support);
+  const rows = steps.map(step => {
+    const detail = String(step.detail || '').replace(/_/g, ' ');
+    return `<li class="trace-row"><span class="trace-name">${escapeHtml(step.name)}</span><span class="trace-status ${escapeAttr(step.status)}">${escapeHtml(step.status)}${detail ? ` · ${escapeHtml(detail)}` : ''}</span><span class="trace-ms">${escapeHtml(String(step.elapsed_ms))} ms</span></li>`;
+  }).join('');
+  return `<details class="trace-section"><summary>How this answer was made</summary><ul class="trace-rows" role="list">${rows}</ul>${support ? `<p class="trace-support">${escapeHtml(support)}<small>Coverage, not verification: this shows which retrieved sources the reviewed answer pointed at. It does not confirm that each statement is true.</small></p>` : ''}</details>`;
 }
 
 const messageArticles = new Map();
 const messageAnswerText = new Map();
+const messageHandoff = new Map(); // msgId -> { handoff, receivedAt }
 
 function finalizeFollowUp(wrap, data, msgId) {
   const msgEl = wrap.querySelector('.msg.assistant');
@@ -225,8 +255,8 @@ function finalizeFollowUp(wrap, data, msgId) {
 
   html += renderFollowUpQuestionsList(data.follow_up_questions || []);
   if (data.anatomy_context) html += anatomyToggleButtonHtml(data.anatomy_context, msgId);
+  html += renderMsgActions(msgId, { copy: false });
   msgEl.innerHTML = html;
-
 }
 
 function finalizeAnswer(wrap, data, msgId) {
@@ -241,8 +271,9 @@ function finalizeAnswer(wrap, data, msgId) {
   html += `<div class="answer-body">${renderAnswerBody(data.answer || '', currentArticles, msgId)}</div>`;
   if (data.tool_results?.length) html += `<div class="answer-tools"><div class="section-eyebrow">Tools used</div>${data.tool_results.map(renderToolCard).join('')}</div>`;
   html += renderSourcesGrid(currentArticles, msgId);
+  html += renderTraceSection(data.handoff);
   if (data.anatomy_context) html += anatomyToggleButtonHtml(data.anatomy_context, msgId);
-  if ((data.answer || '').trim()) html += renderMsgActions(msgId);
+  html += renderMsgActions(msgId, { copy: Boolean((data.answer || '').trim()) });
   msgEl.innerHTML = html;
 
   if (data.followups?.length) renderFollowupChips(data.followups);
@@ -251,13 +282,14 @@ function finalizeAnswer(wrap, data, msgId) {
 
 function handleResult(wrap, msgId, data) {
   turnTimes.push(data.request_context?.received_at || pendingTurnTime || null);
+  registerHandoff(msgId, data.handoff, data.request_context?.received_at || pendingTurnTime);
   if (data.type === 'follow_up') {
     finalizeFollowUp(wrap, data, msgId);
     conversation.push(((data.preliminary_info || '') + ' ' + (data.follow_up_questions || []).join(' ')).trim());
   } else if (data.type === 'emergency') {
     wrap.remove();
-    renderEmergencyBanner(data);
-      conversation.push(((data.emergency_message || '') + (data.answer ? '\n\n' + data.answer : '')).trim());
+    renderEmergencyBanner(data, msgId);
+    conversation.push(((data.emergency_message || '') + (data.answer ? '\n\n' + data.answer : '')).trim());
   } else if (data.type === 'answer' || data.type === 'conversation') {
     finalizeAnswer(wrap, data, msgId);
     conversation.push(data.answer || '');
@@ -376,8 +408,9 @@ async function sendMessage(text) {
     });
     if (!resp.ok || !resp.body) {
       let detail = 'The service is unavailable. Please try again.';
-      try { const body = await resp.json(); if (typeof body.detail === 'string') detail = body.detail; } catch {}
-      throw new Error(detail);
+      let failedHandoff;
+      try { const body = await resp.json(); if (typeof body.detail === 'string') detail = body.detail; failedHandoff = body.handoff; } catch {}
+      throw Object.assign(new Error(detail), { handoff: failedHandoff });
     }
     setOnlineStatus(true);
     reader = resp.body.getReader();
@@ -401,7 +434,7 @@ async function sendMessage(text) {
         if (version !== sessionVersion) return false;
         if (eventType === 'meta') { conversationId = data.conversation_id; pendingTurnTime = data.request_context?.received_at || null; }
         if (eventType === 'step') appendStep(wrap, data.message);
-        if (eventType === 'error') throw new Error(data.detail || 'Please try again.');
+        if (eventType === 'error') throw Object.assign(new Error(data.detail || 'Please try again.'), { handoff: data.handoff });
         if (eventType === 'result') { handleResult(wrap, msgId, data); succeeded = true; break; }
       }
       if (done) break;
@@ -418,7 +451,7 @@ async function sendMessage(text) {
     const detail = controller.signal.aborted
       ? (controller.signal.reason === 'timeout' ? 'This is taking too long. Your question has been kept below.' : 'Response stopped. Your question has been kept below.')
       : error.message;
-    systemErrorMessage(detail, msg);
+    systemErrorMessage(detail, msg, error.handoff);
     return false;
   } finally {
     clearTimeout(timeout);
@@ -475,6 +508,7 @@ function startNewConversation() {
   messageAnatomy.clear();
   messageArticles.clear();
   messageAnswerText.clear();
+  messageHandoff.clear();
   chatScrollInner.innerHTML = '';
   document.querySelectorAll('.followup-section').forEach(el => el.remove());
   closeArticleSidebar();
@@ -536,6 +570,14 @@ chatContainer.addEventListener('click', e => {
     case 'open-education': {
       const version = sessionVersion;
       import('./education.js').then(module => { if (version === sessionVersion && el.isConnected) module.openEducation(el.dataset.guide, el); }).catch(() => { if (version === sessionVersion) systemErrorMessage('The visual could not load. Please try again.'); });
+      break;
+    }
+    case 'open-handoff': {
+      const entry = messageHandoff.get(el.dataset.msgId);
+      if (!entry) break;
+      const version = sessionVersion;
+      const context = { receivedAt: entry.receivedAt, conversationId };
+      import('./handoff.js').then(module => { if (version === sessionVersion && el.isConnected) module.openHandoff(entry.handoff, context, el); }).catch(() => { if (version === sessionVersion) systemErrorMessage('The handoff summary could not load. Please try again.'); });
       break;
     }
     case 'not-sure': {

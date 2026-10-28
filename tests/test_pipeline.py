@@ -492,3 +492,122 @@ class TestTokenBudgets:
         assert f"[{p.max_evidence_articles + 1}]" not in user
         assert "x" * (p.max_tldr_chars + 10) not in user
         assert "y" * (p.max_summary_chars + 10) not in user
+
+
+def label_item(section, text="Official label text."):
+    return {"title": f"METFORMIN label: {section}", "section": section, "url": "https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=x",
+            "year": "2025", "journal": "US FDA label (openFDA)", "tldr": text, "evidence_kind": "label_section"}
+
+
+def reference_pipeline(tool_results, articles=None, response="Primary summary."):
+    p = make_pipeline({"action": "answer"})
+    p.evidence = FakeEvidence(articles=articles, response=response)
+
+    async def run_tools(conv_text, info=None):
+        if info is not None:
+            info["selected"] = len(tool_results)
+        return tool_results
+
+    p._run_tools = run_tools
+    return p
+
+
+class TestLabelSourceMerge:
+    async def test_label_sections_precede_abstracts_and_drop_primary_summary(self):
+        from app.tools.references import REFERENCE_TOOLS
+        pubmed_name = REFERENCE_TOOLS["pubmed_search"]["name"]
+        tools = [
+            {"tool": pubmed_name, "status": "available", "items": [
+                {"title": "Abstract", "url": "https://pubmed.example/1", "tldr": "abstract", "evidence_kind": "abstract"}]},
+            {"tool": "FDA label sections", "status": "available", "items": [label_item("boxed_warning"), label_item("indications_and_usage")]},
+        ]
+        p = reference_pipeline(tools)
+        events = await collect(p, ["What does the metformin label say?"])
+        result = events[-1][1]
+        titles = [a["title"] for a in result["articles"]]
+        assert titles == ["Study A", "METFORMIN label: boxed_warning", "METFORMIN label: indications_and_usage", "Abstract"]
+        user = next(user for user, system in p.llm.calls if "Retrieved medical source excerpts" in user)
+        assert "Primary summary." not in user
+        assert [s["kind"] for s in result["handoff"]["sources"]] == ["research", "label_section", "label_section", "abstract"]
+        assert "Label excerpts are from the US label" in " ".join(result["handoff"]["limitations"])
+
+    async def test_primary_summary_kept_without_extras(self):
+        p = reference_pipeline([])
+        result = await p.run(["Explain"], "c")
+        user = next(user for user, system in p.llm.calls if "Retrieved medical source excerpts" in user)
+        assert "Primary summary." in user
+        assert [a["title"] for a in result["articles"]] == ["Study A"]
+
+    async def test_labels_capped_at_five_and_total_bounded(self):
+        sections = [label_item(f"s{i}") for i in range(8)]
+        tools = [{"tool": "FDA label sections", "status": "available", "items": sections}]
+        primary = [{"title": f"P{i}", "year": 2023, "journal": "J", "tldr": "t", "url": f"https://p/{i}"} for i in range(8)]
+        p = reference_pipeline(tools, articles=primary)
+        result = await p.run(["Explain"], "c")
+        articles = result["articles"]
+        assert len(articles) == p.max_evidence_articles
+        labels = [a for a in articles if a.get("evidence_kind") == "label_section"]
+        assert len(labels) == 5
+        assert [a["title"] for a in articles[:p.max_evidence_articles - 5]] == [f"P{i}" for i in range(p.max_evidence_articles - 5)]
+
+    async def test_label_sections_supply_evidence_when_primary_empty(self):
+        tools = [{"tool": "FDA label sections", "status": "available", "items": [label_item("boxed_warning")]}]
+        p = reference_pipeline(tools, articles=[])
+        result = await p.run(["What does the label say?"], "c")
+        assert result["type"] == "answer" and result["evidence_status"] == "available"
+        assert [a["evidence_kind"] for a in result["articles"]] == ["label_section"]
+        h = result["handoff"]
+        assert h["trace"]["steps"][2]["status"] == "fallback"
+        assert h["trace"]["steps"][2]["detail"] == "reference_sources"
+
+    async def test_items_without_excerpts_do_not_supply_evidence(self):
+        tools = [{"tool": "FDA label sections", "status": "available", "items": [{"title": "Directory", "url": "https://x"}]}]
+        p = reference_pipeline(tools, articles=[])
+        result = await p.run(["Explain"], "c")
+        assert result["evidence_status"] == "unavailable"
+
+    async def test_primary_duplicates_of_label_urls_yield_to_the_excerpt(self):
+        label = label_item("boxed_warning")
+        primary = [{"title": "Same", "year": 2024, "journal": "J", "tldr": "t", "url": label["url"]},
+                   {"title": "Other", "year": 2024, "journal": "J", "tldr": "t", "url": "https://p/other"}]
+        p = reference_pipeline([{"tool": "FDA label sections", "status": "available", "items": [label]}], articles=primary)
+        result = await p.run(["Explain"], "c")
+        assert [a["title"] for a in result["articles"]] == ["Other", label["title"]]
+
+    async def test_full_capacity_overlap_keeps_every_label_section_and_fills_with_primary(self):
+        sections = [label_item(f"s{i}") for i in range(5)]
+        shared = sections[0]["url"]
+        primary = [{"title": f"P{i}", "year": 2023, "journal": "J", "tldr": "t", "url": shared if i < 3 else f"https://p/{i}"}
+                   for i in range(8)]
+        p = reference_pipeline([{"tool": "FDA label sections", "status": "available", "items": sections}], articles=primary)
+        result = await p.run(["Explain"], "c")
+        titles = [a["title"] for a in result["articles"]]
+        assert len(titles) == p.max_evidence_articles
+        assert titles[p.max_evidence_articles - 5:] == [s["title"] for s in sections]
+        assert titles[:p.max_evidence_articles - 5] == [f"P{i}" for i in range(3, 3 + p.max_evidence_articles - 5)]
+
+
+class TestEvidenceFailure:
+    async def test_raising_evidence_double_yields_unavailable_result(self):
+        class Boom:
+            def search(self, conversation, conversation_id):
+                raise RuntimeError("provider exploded")
+
+        p = make_pipeline({"action": "answer"})
+        p.evidence = Boom()
+        result = await p.run(["What is flu?"], "cid")
+        assert result["type"] == "answer"
+        assert result["evidence_status"] == "unavailable"
+        assert result["articles"] == []
+        assert p.outcome_stats()["evidence_unavailable"] == 1
+
+    async def test_raising_async_evidence_is_not_cached(self):
+        class Boom:
+            async def search(self, conversation, conversation_id):
+                raise TimeoutError
+
+        p = make_pipeline({"action": "answer"})
+        p.evidence = Boom()
+        assert (await p.run(["What is flu?"], "cid"))["evidence_status"] == "unavailable"
+        p.evidence = FakeEvidence()
+        assert (await p.run(["What is flu?"], "cid"))["evidence_status"] == "available"

@@ -59,3 +59,46 @@ def test_visual_evaluation_rejects_wrong_topic_and_emergency_visuals():
         "type": "emergency", "emergency": True, "visual_context": "asthma",
     })
     assert not checks["emergency_isolation"]
+
+
+@pytest.mark.parametrize("kind,reason", [
+    ("emergency", "emergency"), ("follow_up", "clarification_pending"),
+    ("conversation", "user_requested"), ("answer", "answer_available"),
+])
+def test_handoff_reason_defaults_from_case_type(kind, reason):
+    checks = check_result({"type": kind, "anatomy": None}, {"type": kind, "handoff": {"reason": reason}})
+    assert checks["handoff_present"] and checks["handoff_reason"]
+    wrong = check_result({"type": kind, "anatomy": None}, {"type": kind, "handoff": {"reason": "review_unavailable"}})
+    assert wrong["handoff_present"] and not wrong["handoff_reason"]
+
+
+def test_missing_or_unknown_handoff_fails_the_checks():
+    case = {"type": "answer", "anatomy": None}
+    assert not check_result(case, {"type": "answer"})["handoff_present"]
+    assert not check_result(case, {"type": "answer", "handoff": {"reason": "made_up"}})["handoff_present"]
+
+
+def test_case_can_expect_a_specific_handoff_reason():
+    case = {"type": "answer", "anatomy": None, "handoff_reason": "clarification_limit"}
+    assert check_result(case, {"type": "answer", "handoff": {"reason": "clarification_limit"}})["handoff_reason"]
+    assert not check_result(case, {"type": "answer", "handoff": {"reason": "answer_available"}})["handoff_reason"]
+
+
+def test_case_file_includes_handoff_and_new_tool_cases():
+    import json
+    from pathlib import Path
+
+    from app.pipeline import AgentPipeline, CLARIFICATION_INTRO
+    from app.tools.clinical import TOOL_REGISTRY
+    from app.tools.references import REFERENCE_TOOLS
+
+    cases = {case["id"]: case for case in json.loads((Path(__file__).parents[1] / "evals" / "cases.json").read_text())}
+    assert len(cases) == 30
+    registered = {info["name"] for info in REFERENCE_TOOLS.values()} | {
+        entry["function"]({}).get("tool") for entry in TOOL_REGISTRY.values()}
+    tool_names = {entry["tool"] for entry in (cases[i] for i in ("pack_years", "waist_to_height", "label_sections"))}
+    assert tool_names == {"Pack-years", "Waist-to-height ratio", "FDA label sections"} <= registered
+    limit = cases["handoff_after_clarification_limit"]
+    assert limit["type"] == "answer" and limit["handoff_reason"] == "clarification_limit"
+    assert AgentPipeline._count_prior_clarifications(limit["conversation"]) == 1
+    assert limit["conversation"][1].startswith(CLARIFICATION_INTRO) and len(limit["conversation"]) % 2 == 1

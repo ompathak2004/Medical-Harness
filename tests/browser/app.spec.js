@@ -1,12 +1,40 @@
 import { test, expect } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 
+function fixtureHandoff(question, sources) {
+  return {
+    version: 1, reason: 'answer_available', urgency: 'routine', questions: [question], calculations: [], references: [],
+    sources: sources.map((s, i) => ({ index: i + 1, title: s.title, year: s.year, journal: s.journal, url: s.url, kind: 'research', cited: true })),
+    limitations: [
+      'This is general information from an automated tool, not a diagnosis or a treatment plan.',
+      "Emergency screen only: 'not flagged' is not a triage category.",
+      "Citations were checked to point at retrieved sources; each claim's truth was not verified.",
+    ],
+    clinician_questions: [
+      { heading: 'What is my main problem?', text: 'I read a sourced explanation about my question; is it relevant to me?' },
+      { heading: 'What do I need to do?', text: 'Which of the listed sources applies to my situation, and what should I do next?' },
+      { heading: 'Why is it important?', text: 'What would change if I waited, and what signs mean I should not wait?' },
+    ],
+    trace: {
+      steps: [
+        { name: 'triage', status: 'ok', elapsed_ms: 640, detail: '' },
+        { name: 'tools', status: 'skipped', elapsed_ms: 0, detail: '' },
+        { name: 'evidence', status: 'ok', elapsed_ms: 1480, detail: '' },
+        { name: 'draft', status: 'ok', elapsed_ms: 1910, detail: '' },
+        { name: 'review', status: 'ok', elapsed_ms: 1120, detail: '' },
+      ],
+      claim_support: { citation_markers: 1, sources_retrieved: sources.length, sources_cited: sources.length, uncited_sources: [] },
+    },
+  };
+}
+
 const answer = {
   type: 'answer', answer: 'The kneecap sits at the front of the knee [1]. This is reference information; discuss symptoms with a clinician.',
   articles: [{ title: 'Knee anatomy reference', year: '2025', journal: 'Synthetic browser fixture', url: 'https://example.org/anatomy', tldr: 'A reference for testing the source panel.' }],
   tool_results: [], followups: [],
   anatomy_context: { scene_id: 'knee', label: 'Knee', reason: 'See how the kneecap relates to the surrounding bones.' },
 };
+answer.handoff = fixtureHandoff('Where is the kneecap?', answer.articles);
 
 async function respond(page, result = answer) {
   await page.route('**/api/chat/stream', route => route.fulfill({
@@ -144,6 +172,7 @@ const eyeAnswer = {
   anatomy_context: null, visual_context: 'eye_pressure', tool_results: [], followups: [],
   request_context: { received_at: '2026-10-12T10:00:00+05:30', local_date: '2026-10-12', time_zone: 'Asia/Kolkata' },
 };
+eyeAnswer.handoff = fixtureHandoff('Explain eye pressure in a visual way.', eyeAnswer.articles);
 
 for (const theme of ['light', 'dark']) {
   for (const [label, viewport] of [['desktop', { width: 1440, height: 1000 }], ['mobile', { width: 390, height: 844 }]]) {

@@ -8,13 +8,24 @@ import math
 import time
 import uuid
 from pathlib import Path
+from typing import get_args
+
+from app.schemas import HandoffReason
 
 
 def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 
+DEFAULT_HANDOFF_REASON = {"emergency": "emergency", "follow_up": "clarification_pending",
+                          "conversation": "user_requested", "answer": "answer_available"}
+HANDOFF_REASONS = set(get_args(HandoffReason))
+
+
 def check_result(case, result):
+    handoff = result.get("handoff")
+    handoff = handoff if isinstance(handoff, dict) else {}
+    expected_reason = case.get("handoff_reason") or DEFAULT_HANDOFF_REASON.get(case["type"])
     emergency = result.get("emergency") is True
     sources = result.get("articles", [])
     context = result.get("anatomy_context") or {}
@@ -24,6 +35,8 @@ def check_result(case, result):
         "visual_relevance": result.get("visual_context") == case.get("visual"),
         "emergency_isolation": not emergency or (result.get("type") == "emergency" and not sources and not result.get("tool_results") and not context and not result.get("visual_context")),
         "evidence_required": result.get("type") != "answer" or (bool(sources) and result.get("evidence_status") == "available"),
+        "handoff_present": handoff.get("reason") in HANDOFF_REASONS,
+        "handoff_reason": handoff.get("reason") == expected_reason,
     }
     if case.get("tool"):
         checks["expected_tool"] = any(item.get("tool") == case["tool"] and not item.get("error") and item.get("status", "available") == "available" for item in result.get("tool_results", []))

@@ -16,7 +16,15 @@ function select(index) {
   if (!state) return;
   dialog.dataset.mode = state.mode || '';
   dialog.querySelectorAll('[data-state]').forEach((button, i) => button.setAttribute('aria-pressed', String(i === index)));
-  dialog.querySelector('.education-drawing').innerHTML = activeGuide.diagram(index);
+  const drawing = dialog.querySelector('.education-drawing');
+  if (activeGuide.staticDiagram !== true) {
+    drawing.innerHTML = activeGuide.diagram(index);
+    drawing.classList.remove('is-entering');
+    void drawing.offsetWidth;
+    drawing.classList.add('is-entering');
+  } else if (!drawing.firstElementChild) {
+    drawing.innerHTML = activeGuide.diagram(index);
+  }
   dialog.querySelector('.education-copy').innerHTML = `<p class="section-eyebrow">${index + 1} / ${activeGuide.states.length} · ${escapeHtml(state.name)}</p><h3>${escapeHtml(state.title)}</h3><p>${escapeHtml(state.text)}</p>${sourceLink(state)}`;
 }
 

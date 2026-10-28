@@ -15,6 +15,7 @@ Settings are validated at startup. Invalid budgets, retry counts, or concurrency
 | `LLM_MAX_RETRIES` | `2` |
 | `CEREBRAS_PROMPT_CACHE_KEY` | `` |
 | `MEDISEARCH_API_KEY` | `` |
+| `OPENFDA_API_KEY` | `` |
 | `MAX_EVIDENCE_ARTICLES` | `8` |
 | `MAX_TLDR_CHARS` | `400` |
 | `MAX_SUMMARY_CHARS` | `1500` |
@@ -36,7 +37,7 @@ Settings are validated at startup. Invalid budgets, retry counts, or concurrency
 | `RATE_LIMIT_REQUESTS` | `20` |
 | `RATE_LIMIT_WINDOW_SECONDS` | `60` |
 
-The total request deadline covers all steps. Providers have shorter timeouts, connection pooling, and circuit breakers that open after three failures for 30 seconds. Only one recovery probe is allowed after cooldown. LLM and primary evidence retry transient failures within fixed attempt limits; reference tools make one bounded attempt. LLM authentication failures are not retried. DailyMed and Europe PMC need no key; each lookup is limited to eight seconds, three records, and 256 KiB. Buffered JSON and evidence SSE are capped at 256 KiB; LLM SSE has a 2 MiB total and 64 KiB line cap.
+The total request deadline covers all steps. Providers have shorter timeouts, connection pooling, and circuit breakers that open after three failures for 30 seconds. Only one recovery probe is allowed after cooldown. LLM and primary evidence retry transient failures within fixed attempt limits; reference tools make one bounded attempt. LLM authentication failures are not retried. DailyMed and Europe PMC need no key. openFDA label lookups also work without one, limited per IP address to 40 requests per minute and 1,000 per day; a free `OPENFDA_API_KEY` raises that to 240 per minute and 120,000 per day. The key is optional and never logged. A rate-limited lookup counts toward the circuit breaker and is reported as unavailable. Each lookup is limited to eight seconds; DailyMed and Europe PMC are capped at 256 KiB and return three records. openFDA returns full labels of 100 to 300 KiB each, so that lookup fetches at most five labels under its own 2 MiB cap and returns one selected single-ingredient label (rows whose metadata does not establish exactly one active substance are rejected). Buffered JSON and evidence SSE are capped at 256 KiB; LLM SSE has a 2 MiB total and 64 KiB line cap.
 
 A zero cache capacity or TTL disables storage. Cached classifications and evidence contain sensitive derived text in process memory, are scoped to a random HTTP-only browser session, and expire. They are never written to disk. All-waiter cancellation also cancels the shared provider task; one cancelled waiter does not interrupt another. Completed answers are not cached. Cache and quota limits are per process, not global across Vercel instances.
 

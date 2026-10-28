@@ -5,7 +5,9 @@ lucide/dist/esm/icons/arrow-right.js:
 lucide/dist/esm/icons/book-open.js:
 lucide/dist/esm/icons/box.js:
 lucide/dist/esm/icons/check.js:
+lucide/dist/esm/icons/clipboard.js:
 lucide/dist/esm/icons/copy.js:
+lucide/dist/esm/icons/download.js:
 lucide/dist/esm/icons/earth.js:
 lucide/dist/esm/icons/external-link.js:
 lucide/dist/esm/icons/eye.js:
@@ -13,6 +15,7 @@ lucide/dist/esm/icons/flask-conical.js:
 lucide/dist/esm/icons/info.js:
 lucide/dist/esm/icons/layers.js:
 lucide/dist/esm/icons/phone.js:
+lucide/dist/esm/icons/printer.js:
 lucide/dist/esm/icons/rotate-ccw.js:
 lucide/dist/esm/icons/triangle-alert.js:
 lucide/dist/esm/icons/user-round.js:

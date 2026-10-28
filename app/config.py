@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     llm_max_retries: int = Field(default=2, ge=1, le=4)
     cerebras_prompt_cache_key: str = ""
     medisearch_api_key: str = Field(min_length=1, repr=False)
+    openfda_api_key: str = Field(default="", repr=False)
     max_evidence_articles: int = Field(default=8, ge=1, le=16)
     max_tldr_chars: int = Field(default=400, ge=1, le=2000)
     max_summary_chars: int = Field(default=1500, ge=1, le=4000)
