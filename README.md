@@ -21,6 +21,12 @@ Ask a health question and get an evidence-grounded answer with source articles. 
 - See how an answer was made: a collapsible panel lists each step, its status, and which retrieved sources the answer cited. This is coverage, not verification of each claim.
 - Read official US label sections (boxed warning, indications, contraindications, warnings, adverse reactions) for a named medicine, and calculate pack-years and waist-to-height ratio from numbers you supply.
 - Calculate non-HDL cholesterol from total and HDL values on the same lipid panel, in matching mg/dL or mmol/L units, without assigning a risk category.
+- Use patient tools from the **Tools** panel, or let the assistant pick one when you give it explicit numbers. Each shows its source and scope, echoes your inputs, can be printed, and can be added to the clinician handoff:
+  - Children: a fever-medicine label lookup (`child_dose_check`: the amount printed on the AAP/FDA label for the child's weight band, with age hard stops and the 24-hour limit; not a personalised dose), growth percentiles on a drawn curve (`growth_percentile`, `child_bmi_percentile`; WHO 0 to 24 months, CDC 2 to 20 years), and an oral rehydration planner (`ors_planner`).
+  - Adults: a lab result reader that places your value on the range printed on your own report and converts units (`lab_result_reader`), a seven-day home blood-pressure log (`bp_log_summary`), a glucose log pattern view (`glucose_log_pattern`) with the A1c line on `estimated_glucose`, peak-flow and heart-failure weight zones (`peak_flow_zone`, `hf_weight_zone`).
+  - Older adults and caregivers: a printable medication schedule that flags the same active ingredient listed twice (`medication_schedule`, with NLM RxNorm; not an interaction check), the CDC STEADI 12-item fall-risk checklist (`steadi_fall_risk`), and a printable when-to-call sheet for after a hospital visit.
+  - Logs stay on your device (opt-in browser storage with a Clear button); the server sees entries only when you press Run. See [scope and limitations](docs/RELIABILITY.md) and [research decisions](docs/RESEARCH.md#patient-tools-across-ages-2026-10-25).
+- Run any tool without a model call: `GET /api/tools` lists the tools and `POST /api/tools/{key}` runs one; see the [API guide](docs/API.md).
 - Open a focused 3D reference scene when a spatial explanation helps the question. General questions download no 3D assets.
 - Explore sourced visual explanations of eye pressure, asthma, reflux, kidney stones, gallstones, joint changes, discs, and arterial plaque when relevant. These compare mechanisms rather than simulate your body.
 - Understand the sections of a written X-ray, CT, MRI, or ultrasound report. Paste relevant wording without personal identifiers; the app cannot inspect scan images.
@@ -30,7 +36,7 @@ Ask a health question and get an evidence-grounded answer with source articles. 
 - Switch between light and dark themes on desktop or mobile. Try asking “How does eye pressure work?” or “Where is the kneecap and how does it move?”
 ## Run locally
 
-You need Python 3.12 or newer, [uv](https://docs.astral.sh/uv/getting-started/installation/), and API keys from [Cerebras Cloud](https://inference-docs.cerebras.ai/console/api-keys) and [MediSearch Developers](https://medisearch.io/developers/docs). The keys belong to those services; Vercel does not provide them. DailyMed and Europe PMC lookups need no additional key.
+You need Python 3.12 or newer, [uv](https://docs.astral.sh/uv/getting-started/installation/), and API keys from [Cerebras Cloud](https://inference-docs.cerebras.ai/console/api-keys) and [MediSearch Developers](https://medisearch.io/developers/docs). The keys belong to those services; Vercel does not provide them. DailyMed, openFDA, RxNorm, and Europe PMC lookups need no additional key.
 
 ```bash
 git clone https://github.com/ompathak2004/Medical-Harness.git
@@ -74,11 +80,11 @@ docker run --env-file .env -p 8080:8080 medical-harness
 | Path | Purpose |
 | --- | --- |
 | `app/main.py` | FastAPI app, middleware, lifecycle, static frontend |
-| `app/api/routes.py` | Chat, streaming chat, health, and metrics routes |
+| `app/api/routes.py` | Chat, streaming chat, tools (`GET /api/tools`, `POST /api/tools/{key}`), health, and metrics routes |
 | `app/pipeline.py` | Triage, retrieval, calculators, generation, safety review |
 | `app/prompts.py` | LLM instructions and output formats |
 | `app/llm.py`, `app/evidence.py` | Cerebras and MediSearch clients |
-| `app/tools/` | Validated calculators, reference lookups, and anatomy selection |
+| `app/tools/` | Validated calculators, growth percentiles (`growth.py`, bundled CDC/WHO tables in `data/`), form tools (`forms.py`), the when-to-call sheet (`sheets.py`), reference lookups, and anatomy selection |
 | `static/` | Browser UI, styles, scripts, and licensed anatomy assets |
 | `tests/` | Offline API/pipeline tests and real-browser UI tests |
 | `evals/` | Synthetic live evaluations and an offline comparison gate |

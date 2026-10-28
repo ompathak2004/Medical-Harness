@@ -1,0 +1,20 @@
+/* tools: child (patient tools). Owned by the child group; the shell, form, result and chart styles live in app.css. */
+.child-timer { border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin: 0 0 14px; }
+.child-timer .tool-subhead { margin-bottom: 6px; }
+.child-interval { border: 0; padding: 0; margin: 0 0 12px; min-width: 0; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.child-interval legend { font-size: 14px; font-weight: 550; padding: 0; margin: 0 0 6px; float: left; width: 100%; }
+.child-timer-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.child-timer-row .handoff-control { justify-content: center; }
+.child-timer-row [aria-pressed='true'] { background: var(--brand); color: var(--bg); border-color: var(--brand); }
+.child-beat { min-height: 1.6em; margin: 10px 0 0; font-size: 17px; font-weight: 600; }
+.child-count { margin: 4px 0 8px; font-size: 14px; color: var(--muted); }
+.child-progress { display: block; width: 100%; height: 14px; accent-color: var(--brand); }
+.child-flags ul { margin: 8px 0 0; padding-left: 20px; }
+.child-flags li + li { margin-top: 4px; }
+@media (max-width: 600px) {
+  .child-timer { padding: 14px; }
+  .child-timer-row .handoff-control { flex: 1 1 120px; }
+}
+@media print {
+  .child-timer-row, .child-interval, .child-beat { display: none; }
+}

@@ -1,6 +1,7 @@
 import { ICON, svg } from './icons.js';
 import { trapDialogFocus } from './dialog.js';
-import { claimSupportText, copyToClipboard, inputsText, traceStepText } from './dom-utils.js';
+import { claimSupportText, copyToClipboard, downloadText, inputsText, isoDay, stamp, traceStepText } from './dom-utils.js';
+import { clearPrintSheet, printSheet } from './print.js';
 
 const REASON_LINES = {
   user_requested: 'The person asked for this summary.',
@@ -11,6 +12,7 @@ const REASON_LINES = {
   emergency: 'The app stopped and told the person to call emergency services.',
   tool_input_missing: 'A calculator was missing information or received an invalid input.',
   answer_available: 'The person chose to share this answer',
+  tools_only: 'The person used a tool without asking a question.',
 };
 
 const list = value => (Array.isArray(value) ? value : []);
@@ -24,21 +26,11 @@ function when(context) {
   return Number.isNaN(date.getTime()) ? new Date() : date;
 }
 
-function stamp(date) {
-  const day = date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
-  const time = date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  return `${day}, ${time}${zone ? ` (${zone})` : ''}`;
-}
-
-function isoDay(date) {
-  const pad = number => String(number).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
-
 function reasonBody(handoff) {
   const line = REASON_LINES[handoff.reason] || REASON_LINES.user_requested;
-  const screen = handoff.urgency === 'emergency'
+  const screen = handoff.reason === 'tools_only'
+    ? 'Emergency screen: not run. No question was asked in the chat.'
+    : handoff.urgency === 'emergency'
     ? 'Emergency screen: flagged. The app told the person to call emergency services.'
     : handoff.urgency === 'unknown'
       ? 'Emergency screen: not flagged (the screen may not have completed; see "How this answer was made"). "Not flagged" is not a triage category.'
@@ -81,8 +73,8 @@ function traceBody(trace) {
   return lines.length ? lines.join('\n') : 'No trace was recorded.';
 }
 
-/** The seven plain-text sections of the handoff, as [title, body] pairs. */
-function handoffSections(handoff) {
+/** The plain-text sections of the handoff, as [title, body] pairs. context.toolSummaries (strings) adds the tools section. */
+function handoffSections(handoff, context) {
   const h = plain(handoff);
   const questions = list(h.questions);
   const calculations = list(h.calculations);
@@ -90,6 +82,7 @@ function handoffSections(handoff) {
   const sources = list(h.sources);
   const limitations = list(h.limitations);
   const clinician = list(h.clinician_questions);
+  const tools = list(plain(context).toolSummaries).filter(text => typeof text === 'string' && text);
   return [
     ['Reason and emergency screen', reasonBody(h)],
     ['What the person asked', questions.length ? questions.map((q, i) => `${i + 1}. ${q}`).join('\n') : 'No question was recorded.'],
@@ -98,6 +91,7 @@ function handoffSections(handoff) {
     ['Sources', sources.length ? sources.map(sourceBody).join('\n') : 'No sources were retrieved.'],
     ['What this tool could not verify', limitations.length ? limitations.map(line => `\u2022 ${line}`).join('\n') : 'No limitations were recorded.'],
     ['Questions to ask your clinician', clinician.length ? clinician.map(q => `${q.heading}\n${q.text}`).join('\n') : NONE],
+    ...(tools.length ? [['Tools the person used (added on request)', tools.join('\n\n')]] : []),
     ['How this answer was made', traceBody(h.trace)],
   ];
 }
@@ -112,7 +106,7 @@ function handoffHeader(context) {
 /** One plain-text string shared by Copy, Print, and Download. Pure. */
 export function handoffText(handoff, context) {
   const parts = [handoffHeader(context).join('\n')];
-  for (const [title, body] of handoffSections(handoff)) parts.push(`${title.toUpperCase()}\n${body}`);
+  for (const [title, body] of handoffSections(handoff, context)) parts.push(`${title.toUpperCase()}\n${body}`);
   return parts.join('\n\n') + '\n';
 }
 
@@ -138,15 +132,6 @@ let currentText = '';
 let currentDate = new Date();
 let copyTimer;
 
-function clearPrintSheet() {
-  window.removeEventListener('afterprint', clearPrintSheet);
-  document.body.classList.remove('printing-handoff');
-  const sheet = document.getElementById('handoff-print');
-  if (!sheet) return;
-  sheet.textContent = '';
-  sheet.hidden = true;
-}
-
 function announce(message) {
   const status = dialog.querySelector('.handoff-status');
   if (status) status.textContent = message;
@@ -166,29 +151,7 @@ async function copyHandoff(button) {
 }
 
 function downloadHandoff() {
-  const url = URL.createObjectURL(new Blob([currentText], { type: 'text/plain' }));
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `clinician-handoff-${isoDay(currentDate)}.txt`;
-  link.hidden = true;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-function printHandoff() {
-  const sheet = document.getElementById('handoff-print');
-  if (!sheet) return;
-  sheet.textContent = currentText;
-  sheet.hidden = false;
-  document.body.classList.add('printing-handoff');
-  window.addEventListener('afterprint', clearPrintSheet, { once: true });
-  try {
-    window.print();
-  } catch {
-    clearPrintSheet();
-  }
+  downloadText(`clinician-handoff-${isoDay(currentDate)}.txt`, currentText);
 }
 
 function buildDialog() {
@@ -219,7 +182,7 @@ function buildDialog() {
     if (!target) return;
     if (target.classList.contains('panel-close')) dialog.close();
     else if (target.dataset.handoff === 'copy') copyHandoff(target);
-    else if (target.dataset.handoff === 'print') printHandoff();
+    else if (target.dataset.handoff === 'print') printSheet(currentText);
     else if (target.dataset.handoff === 'download') downloadHandoff();
   });
   dialog.addEventListener('close', () => {
@@ -246,11 +209,33 @@ export function openHandoff(handoff, context, triggerEl) {
   notice.hidden = !failed;
   notice.textContent = failed ? 'The app could not complete its safety review, so no answer was shown. The details below are still yours to bring to a clinician.' : '';
   const sections = dialog.querySelector('.handoff-sections');
-  sections.replaceChildren(...handoffSections(handoff).map(([title, text]) => {
+  sections.replaceChildren(...handoffSections(handoff, context).map(([title, text]) => {
     const section = node('section', 'handoff-section');
     section.append(node('h3', '', title), node('pre', 'handoff-text', text));
     return section;
   }));
   dialog.showModal();
   dialog.scrollTop = 0;
+}
+
+const GENERAL_LINE = 'This is general information from an automated tool, not a diagnosis or a treatment plan.';
+
+/** A handoff for a person who used tools but asked no question. Pairs with context.toolSummaries. */
+export function toolsOnlyHandoff() {
+  return {
+    version: 1,
+    reason: 'tools_only',
+    urgency: 'unknown',
+    questions: [],
+    calculations: [],
+    references: [],
+    sources: [],
+    limitations: [GENERAL_LINE, 'No question was asked in the chat, so the emergency screen did not run.'],
+    clinician_questions: [
+      { heading: 'What is my main problem?', text: 'I used some online tools at home and added their results below. They did not assess anything about my health.' },
+      { heading: 'What do I need to do?', text: 'Do these numbers or results change anything I should do or watch for?' },
+      { heading: 'Why is it important?', text: 'Which of these results matter most for me, and how often should I check them?' },
+    ],
+    trace: { steps: [], claim_support: null },
+  };
 }

@@ -15,16 +15,32 @@ from app.config import get_settings
 from app.context import request_context, resolve_context, user_turn_times
 from app.handoff import build_handoff
 from app.pipeline import ReviewUnavailable, cache_scope
-from app.schemas import ChatRequest, ChatResponse
+from app.prompts import WHEN_TO_CALL_REQUEST
+from app.schemas import ChatRequest, ChatResponse, ToolRunRequest, ToolRunResponse
+from app.tools.clinical import TOOL_REGISTRY
+from app.tools.forms import FORM_TOOLS, run_form_tool
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
 
 
+def _turns(req: ChatRequest) -> list[str]:
+    """The conversation the pipeline sees: the client's turns, or for a sheet the one server-built user turn."""
+    if req.sheet is None:
+        return req.conversation
+    return [WHEN_TO_CALL_REQUEST.format(condition=req.sheet.condition)]
+
+
+def _pipeline_options(req: ChatRequest) -> dict:
+    return {"mode": "when_to_call"} if req.sheet is not None else {}
+
+
 def _validate_conversation(req: ChatRequest) -> None:
     settings = get_settings()
-    conv = req.conversation
+    if req.sheet is not None and (req.conversation or req.user_turn_times):
+        raise HTTPException(400, "A sheet request must not include a conversation.")
+    conv = _turns(req)
     if req.user_turn_times and len(req.user_turn_times) != len(conv) // 2:
         raise HTTPException(400, "Provide one timestamp per earlier user turn.")
     if len(conv) % 2 == 0:
@@ -57,7 +73,7 @@ REVIEW_UNAVAILABLE_DETAIL = "Unable to complete the answer review. Please try ag
 def _failure_handoff(req: ChatRequest, exc: BaseException | None = None) -> dict:
     """Handoff for an error payload: the pipeline's own when it set one, else nothing ran."""
     return getattr(exc, "handoff", None) or build_handoff(
-        req.conversation, "review_unavailable", None, triage_done=False
+        _turns(req), "review_unavailable", None, triage_done=False
     )
 
 
@@ -80,7 +96,7 @@ async def chat(req: ChatRequest, request: Request) -> ChatResponse:
     try:
         async with slots:
             result = await asyncio.wait_for(pipeline.run(
-                conversation=req.conversation, conversation_id=conversation_id
+                conversation=_turns(req), conversation_id=conversation_id, **_pipeline_options(req)
             ), timeout=get_settings().request_timeout_seconds)
     except (ReviewUnavailable, asyncio.TimeoutError) as exc:
         return JSONResponse(
@@ -108,7 +124,8 @@ async def chat_stream(req: ChatRequest, request: Request) -> StreamingResponse:
         request_context.set(context)
         user_turn_times.set(req.user_turn_times)
         pending = None
-        stream = pipeline.run_streaming(conversation=req.conversation, conversation_id=conversation_id)
+        stream = pipeline.run_streaming(
+            conversation=_turns(req), conversation_id=conversation_id, **_pipeline_options(req))
         deadline = time.monotonic() + get_settings().request_timeout_seconds
         try:
             yield _sse("meta", {"conversation_id": conversation_id, "request_context": context.model_dump(mode="json")})
@@ -171,3 +188,24 @@ async def metrics(request: Request) -> dict:
         "evidence_cache": pipeline.evidence_cache.stats(),
         "outcomes": pipeline.outcome_stats(),
     }
+
+
+@router.get("/tools")
+async def list_tools() -> dict:
+    tools = [{"key": key, "name": info["name"], "description": info["description"], "variables": info["variables"],
+              "source": info["source"], "scope": info["scope"], "kind": kind}
+             for kind, registry in (("calculator", TOOL_REGISTRY), ("form", FORM_TOOLS)) for key, info in registry.items()]
+    return {"tools": tools}
+
+
+@router.post("/tools/{key}", response_model=ToolRunResponse)
+async def run_tool(key: str, body: ToolRunRequest, request: Request) -> ToolRunResponse:
+    if key in FORM_TOOLS:
+        result = await run_form_tool(key, body.inputs, getattr(request.app.state.pipeline, "references", None))
+    elif key in TOOL_REGISTRY:
+        result = TOOL_REGISTRY[key]["function"](body.inputs)
+    else:
+        raise HTTPException(404, "Unknown tool.")
+    outcome = "unavailable" if result.get("status") == "unavailable" else "error" if "error" in result else "ok"
+    logger.info("tool run tool_key=%s outcome=%s", key, outcome)
+    return ToolRunResponse(tool_key=key, result=result)

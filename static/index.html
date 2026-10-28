@@ -19,6 +19,7 @@
   </a>
   <div class="header-status">
     <button type="button" class="new-convo-btn" id="new-convo-btn" aria-label="Start a new question" title="New question"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+    <button type="button" class="icon-btn tools-btn" id="tools-btn" aria-label="Open patient tools"><span data-icon="layoutGrid"></span><span class="tools-btn-label">Tools</span></button>
     <button type="button" class="icon-btn theme-toggle" id="theme-toggle-btn" aria-label="Toggle light or dark theme">
       <svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M5 5l1.4 1.4M17.6 17.6L19 19M2 12h2M20 12h2M5 19l1.4-1.4M17.6 6.4L19 5"/></svg>
       <svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></svg>
@@ -51,7 +52,12 @@
           <button type="button" data-example="How does eye pressure work?"><span data-icon="eye"></span><strong>Understand a condition</strong><span>What does eye pressure mean?</span><span class="example-arrow" data-icon="arrowRight"></span></button>
           <button type="button" data-example="What does an HbA1c blood test measure?"><span data-icon="lab"></span><strong>Make sense of a result</strong><span>Explore a lab test in plain language</span><span class="example-arrow" data-icon="arrowRight"></span></button>
           <button type="button" data-example="Where is the kneecap and how does it move?"><span data-icon="cube"></span><strong>See how your body works</strong><span>Explore reference anatomy in 3D</span><span class="example-arrow" data-icon="arrowRight"></span></button>
-        </div><p class="home-footnote">Ask in your own words. We’ll ask for more detail when it helps.</p></div>
+        </div><div class="home-tools"><p class="section-eyebrow">Tools for everyday care</p><div class="chip-row">
+          <button type="button" class="chip" data-action="open-tool" data-tool="child_dose_check">Child fever medicine amount</button>
+          <button type="button" class="chip" data-action="open-tool" data-tool="bp_log_summary">Home blood pressure log</button>
+          <button type="button" class="chip" data-action="open-tool" data-tool="medication_schedule">Medication schedule sheet</button>
+          <button type="button" class="chip" data-action="open-tool" data-tool="catalogue">All tools</button>
+        </div></div><p class="home-footnote">Ask in your own words. We’ll ask for more detail when it helps.</p></div>
         <noscript><p>JavaScript is needed to submit a question. For emergencies, contact local emergency services.</p></noscript>
       </div>
     </div>
@@ -79,7 +85,7 @@
   <div class="atlas-explorer"><div class="atlas-search-row"><label for="atlas-search">Find a structure</label><span id="atlas-count"></span></div><input id="atlas-search" type="search" placeholder="Search this region" autocomplete="off"><select id="atlas-structures" size="4" aria-label="Structures in this region"></select><p id="atlas-selection" aria-live="polite">Select a structure in the model or list.</p><button type="button" id="atlas-use">Use this area in my question</button></div>
   <p class="atlas-attribution">Adult reference atlas, including male-specific structures. It does not show your body or diagnose a condition.<br>Adapted from <a href="https://lifesciencedb.jp/bp3d/" target="_blank" rel="noopener noreferrer">BodyParts3D</a>, © DBCLS · <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a></p>
 </dialog>
-<section id="handoff-print" aria-label="Clinician handoff for printing" hidden></section>
+<section id="print-sheet" aria-label="Sheet for printing" hidden></section>
 <div class="citation-tooltip" id="citation-tooltip" role="tooltip"></div>
 <script type="module" src="{{APP_JS}}"></script>
 {{ANALYTICS_SCRIPT}}

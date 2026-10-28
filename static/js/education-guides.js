@@ -136,6 +136,7 @@ export const GUIDES = {
   blood_pressure: {
     intro: 'A cuff reading contains two pressures. Select a number to see what it describes.', diagram: bloodPressure,
     caption: 'Illustrative numbers · not your reading or a treatment target',
+    tool: { key: 'bp_log_summary', label: 'Try the tool: home blood pressure log' },
     footer: 'Original educational diagram informed by NHS sources. A personal reading needs clinical context; thresholds and targets vary by setting and patient.',
     states: [
       state('Top number', 'Systolic: pressure as the heart pumps', 'The top number describes pressure when the heart pumps blood. Blood pressure is recorded in millimetres of mercury, written mmHg. The example is not a result from your body.', pressureTest, 'NHS · Blood pressure numbers'),
@@ -170,6 +171,7 @@ export const GUIDES = {
   },
   asthma: {
     intro: 'Compare the space inside an airway. Select a view to see what changes.', diagram: airway,
+    tool: { key: 'peak_flow_zone', label: 'Try the tool: peak-flow zone' },
     states: [
       state('Open airway', 'Air needs a clear passage', 'Air travels through the airways into and out of the lungs. This cross-section shows the opening surrounded by the airway wall.', `${nih}/asthma`, 'NHLBI · Asthma overview'),
       state('Narrowed airway', 'Less space makes breathing harder', 'During an asthma flare-up, swelling or tightening narrows the airways. This simplified comparison shows the reduced opening, not a measurement of lung function.', `${nih}/asthma/attacks`, 'NHLBI · Asthma attacks'),

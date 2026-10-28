@@ -1,19 +1,45 @@
 from __future__ import annotations
 
-from typing import Literal
+import re
+from typing import Any, Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.context import ClientContext, RequestContext
 from app.tools.anatomy import AnatomyContext
 from app.tools.education import VisualId
 
 
+_SHEET_CONDITION = re.compile(r"[^\W_](?:[^\W_]|[ ,.'()/&+-]){2,199}")
+
+
+class SheetRequest(BaseModel):
+    """A when-to-call sheet request. Only the condition leaves the browser; never names, numbers, or thresholds."""
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    kind: Literal["when_to_call"]
+    condition: str = Field(min_length=3, max_length=200)
+
+    @field_validator("condition")
+    @classmethod
+    def plain_condition(cls, value: str) -> str:
+        # Letters, digits, spaces, basic punctuation; no run of four digits (dates, phone numbers, identifiers).
+        if not _SHEET_CONDITION.fullmatch(value) or re.search(r"\d{4}", value):
+            raise ValueError("Describe the condition in a few plain words, without numbers or identifiers.")
+        return value
+
+
 class ChatRequest(BaseModel):
-    conversation: list[str] = Field(..., min_length=1)
+    conversation: list[str] = Field(default_factory=list)
     conversation_id: str | None = Field(default=None, max_length=128)
     context: ClientContext = Field(default_factory=ClientContext)
     user_turn_times: list[AwareDatetime | None] = Field(default_factory=list, max_length=20)
+    sheet: SheetRequest | None = None
+
+    @model_validator(mode="after")
+    def conversation_required_without_sheet(self):
+        if not self.conversation and self.sheet is None:
+            raise ValueError("conversation must contain at least one message")
+        return self
 
 
 HandoffReason = Literal[
@@ -96,6 +122,15 @@ class Handoff(BaseModel):
     trace: HandoffTrace
 
 
+class WhenToCallSheet(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["when_to_call"]
+    emergency_signs: list[str]
+    emergency_line: str
+    routine_lines: list[str]
+    middle_tier_source: Literal["answer", "unavailable"]
+
+
 class ChatResponse(BaseModel):
     type: Literal["follow_up", "answer", "emergency", "conversation"]
     follow_up_questions: list[str] = []
@@ -112,3 +147,14 @@ class ChatResponse(BaseModel):
     emergency: bool = False
     emergency_message: str = ""
     handoff: Handoff | None = None
+    sheet: WhenToCallSheet | None = None
+
+
+class ToolRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    inputs: dict[str, Any]
+
+
+class ToolRunResponse(BaseModel):
+    tool_key: str
+    result: dict

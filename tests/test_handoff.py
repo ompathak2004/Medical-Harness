@@ -223,6 +223,14 @@ class TestContent:
         assert h["calculations"][0]["inputs"] == {"packs_per_day": 1, "years_smoked": 30}
         assert h["calculations"][0]["result"] == "30.0" and h["calculations"][0]["units"] == "pack-years"
 
+    def test_steadi_checklist_is_a_calculation_not_a_reference(self):
+        from app.tools.clinical import TOOL_REGISTRY
+        keys = TOOL_REGISTRY["steadi_fall_risk"]["variables"]
+        tool = TOOL_REGISTRY["steadi_fall_risk"]["function"]({key: key == "fallen_past_year" for key in keys})
+        h = build_handoff(["q"], "answer_available", None, triage_done=True, tool_results=[tool], articles=[], answer="ok")
+        assert h["references"] == [] and len(h["calculations"]) == 1
+        assert h["calculations"][0]["result"] == "2" and h["calculations"][0]["inputs"]["fallen_past_year"] is True
+
     def test_reference_limitations_and_label_note(self):
         tools = [
             {"tool": "DailyMed", "status": "unavailable", "items": [], "error": "down"},
@@ -267,3 +275,56 @@ class TestClaimSupport:
     def test_skipped_steps_shape(self):
         assert [s["name"] for s in skipped_steps()] == STEP_NAMES
         assert {s["status"] for s in skipped_steps()} == {"skipped"}
+
+
+class TestPatientToolHandoff:
+    def test_headline_falls_back_to_summary(self):
+        from app.handoff import _headline
+        assert _headline({"summary": "5 mL every 4 h"}) == ("5 mL every 4 h", "")
+        assert _headline({"value": 12, "units": "kg", "summary": "ignored"}) == ("12", "kg")
+        assert _headline({"summary": ""}) == ("", "")
+        assert _headline({"summary": 7}) == ("", "")
+
+    def test_summary_tool_is_a_calculation_and_form_lists_are_dropped(self):
+        result = {"tool": "Home blood-pressure log", "key": "bp_log_summary", "source": "https://s", "scope": "adults",
+                  "inputs": {"readings": [{"systolic": 120}], "window_end": "2026-10-07"},
+                  "summary": "7-day average 128/82 from 14 readings"}
+        h = build_handoff(["q"], "answer_available", None, triage_done=True, tool_results=[result])
+        Handoff(**h)
+        calc = h["calculations"][0]
+        assert calc["result"] == "7-day average 128/82 from 14 readings" and calc["units"] == ""
+        assert calc["inputs"] == {"window_end": "2026-10-07"} and h["references"] == []
+
+    def test_rxnorm_limitation_only_when_lookup_worked(self):
+        from app.handoff import LIMITATION_RXNORM
+        base = {"tool": "RxNorm ingredients", "source": "https://rxnav.nlm.nih.gov/", "scope": "s"}
+        for status, expected in [("available", True), ("empty", True), ("unavailable", False)]:
+            result = {**base, "status": status, "items": [{"title": "acetaminophen", "url": "https://u"}] if status == "available" else []}
+            h = build_handoff(["q"], "answer_available", None, triage_done=True, tool_results=[result, dict(result)])
+            assert h["limitations"].count(LIMITATION_RXNORM) == (1 if expected else 0)
+        assert LIMITATION_RXNORM == "RxNorm matched medicine names to ingredients; it did not check interactions or doses."
+
+
+# ---------------------------------------------------------------- when-to-call sheet limitation
+
+def test_sheet_limitation_is_added_only_when_a_sheet_is_present_and_stays_before_the_citation_line():
+    from app.handoff import LIMITATION_SHEET
+    article = {"title": "Study", "url": "https://example.org/s"}
+    plain = build_handoff(["q"], "answer_available", None, triage_done=True, articles=[article], answer="Sign [1].")
+    sheet = build_handoff(["q"], "answer_available", None, triage_done=True, articles=[article], answer="Sign [1].", sheet=True)
+    assert LIMITATION_SHEET not in plain["limitations"]
+    assert sheet["limitations"].count(LIMITATION_SHEET) == 1
+    assert sheet["limitations"][-1] == LIMITATION_CITATIONS
+    assert [x for x in sheet["limitations"] if x != LIMITATION_SHEET] == plain["limitations"]
+    assert sheet["reason"] == plain["reason"] == "answer_available"
+    Handoff(**sheet)
+
+
+def test_sheet_limitation_text_and_sensitivity():
+    from app.handoff import LIMITATION_SHEET
+    assert LIMITATION_SHEET == (
+        "When-to-call sheet: the middle tier was written from retrieved sources and reviewed; the emergency and routine tiers "
+        "are fixed; names, numbers, and personal thresholds were added in the browser and never sent."
+    )
+    handoff = build_handoff([SECRET], "answer_available", None, triage_done=True, answer=f"{SECRET} [1]", sheet=True)
+    assert SECRET not in json.dumps(handoff["limitations"])

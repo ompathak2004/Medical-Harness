@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     max_request_bytes: int = Field(default=262144, ge=1024, le=1048576)
     rate_limit_requests: int = Field(default=20, ge=1, le=1000)
     rate_limit_window_seconds: int = Field(default=60, ge=1, le=3600)
+    tool_rate_limit_requests: int = Field(default=60, ge=1, le=1000)
 
     @property
     def cors_origin_list(self) -> list[str]:

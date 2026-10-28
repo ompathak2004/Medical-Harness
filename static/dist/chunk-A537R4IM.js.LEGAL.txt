@@ -1,6 +1,7 @@
 Bundled license information:
 
 lucide/dist/esm/defaultAttributes.js:
+lucide/dist/esm/icons/arrow-left.js:
 lucide/dist/esm/icons/arrow-right.js:
 lucide/dist/esm/icons/book-open.js:
 lucide/dist/esm/icons/box.js:
@@ -14,9 +15,16 @@ lucide/dist/esm/icons/eye.js:
 lucide/dist/esm/icons/flask-conical.js:
 lucide/dist/esm/icons/info.js:
 lucide/dist/esm/icons/layers.js:
+lucide/dist/esm/icons/layout-grid.js:
+lucide/dist/esm/icons/moon.js:
 lucide/dist/esm/icons/phone.js:
+lucide/dist/esm/icons/plus.js:
 lucide/dist/esm/icons/printer.js:
 lucide/dist/esm/icons/rotate-ccw.js:
+lucide/dist/esm/icons/sun.js:
+lucide/dist/esm/icons/sunrise.js:
+lucide/dist/esm/icons/sunset.js:
+lucide/dist/esm/icons/trash-2.js:
 lucide/dist/esm/icons/triangle-alert.js:
 lucide/dist/esm/icons/user-round.js:
 lucide/dist/esm/icons/x.js:

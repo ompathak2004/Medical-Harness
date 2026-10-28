@@ -12,6 +12,7 @@ logs/
 .pytest_cache/
 .artifacts/
 data/
+!app/tools/data/
 node_modules/
 playwright-report/
 test-results/

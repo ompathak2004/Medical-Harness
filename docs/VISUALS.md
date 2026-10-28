@@ -37,3 +37,32 @@ The visual-guide button appears above the reviewed answer so it remains discover
 | Imaging reports | [View](media/guide-radiology_report-desktop-light.png) | [View](media/guide-radiology_report-mobile-dark.png) |
 | Blood pressure | [View](media/guide-blood_pressure-desktop-light.png) | [View](media/guide-blood_pressure-mobile-dark.png) |
 | ECG signals | [View](media/guide-ecg-desktop-light.png) | [View](media/guide-ecg-mobile-dark.png) |
+
+## Patient tools
+
+The Tools button in the header (or the `#tools` deep link) opens a catalogue of eleven patient tools in six groups. A single tool opens from the catalogue, from the `#tool=<key>` deep link, from the launch button under a chat answer that used it, or from the "Try the tool" link in a visual guide. Each tool runs without a language model and shows its source and scope. Screenshots below use synthetic inputs; `tests/browser/tools*.spec.js`, `logs.spec.js`, and `sheets.spec.js` generate them.
+
+| Catalogue | Light | Dark |
+| --- | --- | --- |
+| Desktop | ![Desktop catalogue light](media/tools-catalogue-desktop-light.png) | ![Desktop catalogue dark](media/tools-catalogue-desktop-dark.png) |
+| Mobile | ![Mobile catalogue light](media/tools-catalogue-mobile-light.png) | ![Mobile catalogue dark](media/tools-catalogue-mobile-dark.png) |
+
+| Tool (key) | Group | What it does | Desktop light | Narrow mobile dark |
+| --- | --- | --- | --- | --- |
+| Child fever-medicine amount (`child_dose_check`) | Babies and children | Fever-medicine amount for a weight band, shown on a syringe picture. | [View](media/tool-child_dose_check-desktop-light.png) | [View](media/tool-child_dose_check-mobile-dark.png) |
+| Growth percentiles (`growth_percentile`) | Babies and children | Weight, length or head size placed on WHO and CDC growth curves. | [View](media/tool-growth_percentile-desktop-light.png) | [View](media/tool-growth_percentile-mobile-dark.png) |
+| Oral rehydration planner (`ors_planner`) | Babies and children | Oral rehydration amounts with a teaspoon timer. | [View](media/tool-ors_planner-desktop-light.png) | [View](media/tool-ors_planner-mobile-dark.png) |
+| Home blood pressure log (`bp_log_summary`) | Heart, blood pressure and sugar | Home blood pressure log with morning and evening averages and the pressure bands. | [View](media/tool-bp_log_summary-desktop-light.png) | [View](media/tool-bp_log_summary-mobile-dark.png) |
+| Glucose pattern view and A1c (`glucose_log_pattern`) | Heart, blood pressure and sugar | Glucose readings by time of day, plus an A1c conversion. | [View](media/tool-glucose_log_pattern-desktop-light.png) | [View](media/tool-glucose_log_pattern-mobile-dark.png) |
+| Peak-flow zone (`peak_flow_zone`) | Breathing and heart failure | A peak-flow reading placed in the green, yellow or red zone. | [View](media/tool-peak_flow_zone-desktop-light.png) | [View](media/tool-peak_flow_zone-mobile-dark.png) |
+| Daily weight check (`hf_weight_zone`) | Breathing and heart failure | Daily weight compared with yesterday and last week. | [View](media/tool-hf_weight_zone-desktop-light.png) | [View](media/tool-hf_weight_zone-mobile-dark.png) |
+| Read a lab result (`lab_result_reader`) | Test results | A lab value placed against the range printed on the report. | [View](media/tool-lab_result_reader-desktop-light.png) | [View](media/tool-lab_result_reader-mobile-dark.png) |
+| Medication schedule sheet (`medication_schedule`) | Medicines and staying safe at home | Printable medication grid of what each label says and when. | [View](media/tool-medication_schedule-desktop-light.png) | [View](media/tool-medication_schedule-mobile-dark.png) |
+| Fall-risk checklist (CDC STEADI) (`steadi_fall_risk`) | Medicines and staying safe at home | The twelve-question CDC STEADI fall-risk checklist. | [View](media/tool-steadi_fall_risk-desktop-light.png) | [View](media/tool-steadi_fall_risk-mobile-dark.png) |
+| When-to-call sheet (`when_to_call`) | After a hospital visit | Printable when-to-call sheet of warning signs and who to call. | [View](media/tool-when_to_call-desktop-light.png) | [View](media/tool-when_to_call-mobile-dark.png) |
+
+Printable sheets are captured in print layout: [medication sheet](media/sheet-medication-print.png) and [when-to-call sheet](media/sheet-when-to-call-print.png).
+
+### Links from the visual guides
+
+Two visual guides end with a "Try the tool" button that reuses the `open-tool` action: Understanding blood pressure opens `bp_log_summary`, and How asthma affects an airway opens `peak_flow_zone`. A guide declares this with an optional `tool: { key, label }` field in `static/js/education-guides.js`; guides without the field show no button. `tests/browser/education.spec.js` covers the link, opening with Enter, a 320 px dark layout, and the guides that have no link. The updated [blood pressure](media/guide-blood_pressure-mobile-dark.png) and [asthma](media/guide-asthma-desktop-light.png) guide screenshots show the button.

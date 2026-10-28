@@ -1,0 +1,1 @@
+import{a as r,b as s,c as n,d as e,e as o,f as t,g as u,h as i}from"./chunk-A537R4IM.js";var c=Object.fromEntries(Object.entries({back:r,moon:s,plus:n,sun:e,sunrise:o,sunset:t,trash:u}).map(([m,p])=>[m,i(p)]));export{c as a};

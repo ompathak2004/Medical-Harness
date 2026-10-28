@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import re
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -6,7 +7,9 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from app.tools.references import LABEL_COMBINATION_ERROR, LABEL_RATE_LIMIT_ERROR, LABEL_UNVERIFIED_ERROR, REFERENCE_TOOLS, ReferenceTools
+from app.tools.references import (
+    LABEL_COMBINATION_ERROR, LABEL_RATE_LIMIT_ERROR, LABEL_UNVERIFIED_ERROR, REFERENCE_TOOLS, RXNORM_RATE_LIMIT_ERROR, ReferenceTools,
+)
 from tests.test_pipeline import make_pipeline, FakeEvidence
 
 
@@ -314,3 +317,238 @@ async def test_label_sections_still_reject_payloads_over_the_label_budget():
     result, _, tools = await label_lookup(lambda request: httpx.Response(200, json=payload))
     await tools.aclose()
     assert result["status"] == "unavailable"
+
+
+# ---------------------------------------------------------------- RxNorm ingredients
+
+def rxnorm_responder(match, related, calls=None):
+    def respond(request):
+        if calls is not None:
+            calls.append(request)
+        if request.url.path.endswith("/rxcui.json"):
+            return httpx.Response(200, json=match)
+        return httpx.Response(200, json=related)
+    return respond
+
+
+def concept(rxcui, name, tty="IN"):
+    return {"rxcui": rxcui, "name": name, "synonym": "", "tty": tty, "language": "ENG", "suppress": "N", "umlscui": ""}
+
+
+def related_group(ingredients=(), combinations=()):
+    return {"relatedGroup": {"rxcui": None, "conceptGroup": [
+        {"tty": "IN", **({"conceptProperties": [concept(*i) for i in ingredients]} if ingredients else {})},
+        {"tty": "MIN", **({"conceptProperties": [concept(*c, "MIN") for c in combinations]} if combinations else {})},
+    ]}}
+
+
+async def rxnorm_lookup(responder, query="Tylenol", tools=None):
+    requests = []
+    def handler(request):
+        requests.append(request)
+        return responder(request)
+    tools = tools or ReferenceTools(httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    return await tools.run("rxnorm_ingredients", {"query": query}), requests, tools
+
+
+def test_rxnorm_registry_entry_and_pipeline_tool_list():
+    info = REFERENCE_TOOLS["rxnorm_ingredients"]
+    assert info["name"] == "RxNorm ingredients"
+    assert info["variables"] == ["query"]
+    assert info["source"] == "https://rxnav.nlm.nih.gov/"
+    assert info["scope"] == "US RxNorm vocabulary; confirm the exact product with a pharmacist"
+    assert len(info["description"]) < 300
+    assert list(REFERENCE_TOOLS)[-1] == "rxnorm_ingredients"
+    assert "rxnorm_ingredients" in make_pipeline({"action": "answer"}).tools
+
+
+async def test_rxnorm_resolves_brand_to_ingredient_with_two_fixed_requests():
+    calls = []
+    responder = rxnorm_responder({"idGroup": {"rxnormId": ["202433"]}}, related_group([("161", "acetaminophen")]), calls)
+    result, requests, tools = await rxnorm_lookup(responder)
+    await tools.aclose()
+    assert result["status"] == "available"
+    assert result["tool"] == "RxNorm ingredients"
+    assert result["combination"] is False
+    assert result["rxcui"] == "202433"
+    assert result["items"] == [{"title": "acetaminophen", "rxcui": "161", "tty": "IN",
+                                "url": "https://mor.nlm.nih.gov/RxNav/search?searchBy=RXCUI&searchTerm=161"}]
+    assert [str(r.url) for r in requests] == [
+        "https://rxnav.nlm.nih.gov/REST/rxcui.json?name=Tylenol&search=2",
+        "https://rxnav.nlm.nih.gov/REST/rxcui/202433/related.json?tty=IN+MIN",
+    ]
+    assert not any("tldr" in item for item in result["items"])
+
+
+async def test_rxnorm_combination_product_lists_ingredients_and_the_combination():
+    related = related_group([("161", "acetaminophen"), ("7804", "oxycodone")], [("214183", "acetaminophen / oxycodone")])
+    result, _, tools = await rxnorm_lookup(rxnorm_responder({"idGroup": {"rxnormId": ["42844"]}}, related), "Percocet")
+    await tools.aclose()
+    assert result["combination"] is True
+    assert [(i["tty"], i["rxcui"]) for i in result["items"]] == [("IN", "161"), ("IN", "7804"), ("MIN", "214183")]
+
+
+async def test_rxnorm_single_ingredient_is_not_flagged_when_its_combinations_are_listed():
+    # RxNorm returns every combination containing a single ingredient under MIN; that is not "this is a combination".
+    related = related_group([("29046", "lisinopril")], [("214618", "hydrochlorothiazide / lisinopril")])
+    result, _, tools = await rxnorm_lookup(rxnorm_responder({"idGroup": {"rxnormId": ["29046"]}}, related), "lisinopril")
+    await tools.aclose()
+    assert result["combination"] is False
+    assert [i["tty"] for i in result["items"]] == ["IN"]
+
+
+async def test_rxnorm_no_match_is_empty_without_second_request():
+    result, requests, tools = await rxnorm_lookup(rxnorm_responder({"idGroup": {}}, {}), "Tylenool")
+    await tools.aclose()
+    assert result["status"] == "empty"
+    assert result["items"] == []
+    assert len(requests) == 1
+
+
+@pytest.mark.parametrize("match", [{"idGroup": ["bad"]}, {"idGroup": {"rxnormId": "161"}}, {"idGroup": {"rxnormId": []}}, {}])
+async def test_rxnorm_unrecognised_match_shapes_are_empty(match):
+    result, requests, tools = await rxnorm_lookup(rxnorm_responder(match, {}))
+    await tools.aclose()
+    assert result["status"] == "empty"
+    assert len(requests) == 1
+
+
+@pytest.mark.parametrize("rxcui", ["abc", "123456789", "", "12 34", "../1", 161, None])
+async def test_rxnorm_rejects_invalid_rxcui_before_second_request(rxcui):
+    result, requests, tools = await rxnorm_lookup(rxnorm_responder({"idGroup": {"rxnormId": [rxcui]}}, {}))
+    await tools.aclose()
+    assert result["status"] == "empty"
+    assert len(requests) == 1
+    assert tools.circuits["rxnorm_ingredients"].failures == 0
+
+
+async def test_rxnorm_skips_malformed_related_concepts():
+    related = {"relatedGroup": {"conceptGroup": [
+        {"tty": "IN", "conceptProperties": [
+            concept("../9", "bad id"), concept("161", "<b>acetaminophen</b>"), concept("161", "acetaminophen"),
+            concept("12", ""), concept("13", "other", "BN"), "junk"]},
+        "junk",
+    ]}}
+    result, _, tools = await rxnorm_lookup(rxnorm_responder({"idGroup": {"rxnormId": ["1"]}}, related))
+    await tools.aclose()
+    assert [(i["rxcui"], i["title"]) for i in result["items"]] == [("161", "acetaminophen")]
+
+
+@pytest.mark.parametrize("query", ["Tylenol", "co-trimoxazole", "vitamin D3", "Metformin 500", "a", "A" * 60])
+async def test_rxnorm_accepts_medicine_style_queries(query):
+    result, requests, tools = await rxnorm_lookup(rxnorm_responder({"idGroup": {}}, {}), query)
+    await tools.aclose()
+    assert result["status"] == "empty"
+    assert requests[0].url.params["name"] == query
+
+
+@pytest.mark.parametrize("query", [
+    "A" * 61, "1abc", " Tylenol", "name@example.com", "https://internal", "DOB 1990-01-01", "call 5551234",
+    "aspirin 2026", "Tylenol; DROP", "tylenol\n", "", 12, None, "aspirin/ibuprofen", "x" * 5000,
+])
+async def test_rxnorm_invalid_queries_make_no_network_request(query):
+    result, requests, tools = await rxnorm_lookup(rxnorm_responder({}, {}), query)
+    await tools.aclose()
+    assert result["status"] == "unavailable"
+    assert result["items"] == []
+    assert not requests
+
+
+async def test_rxnorm_pattern_applies_to_this_key_only():
+    # Digits and a 60-character budget are RxNorm-only; the other reference tools keep their pattern.
+    for key in ("drug_labels", "pubmed_search", "label_sections"):
+        result, requests = await lookup(key, {}, "vitamin D3")
+        assert result["status"] == "unavailable" and not requests
+
+
+async def test_rxnorm_rate_limit_is_unavailable_and_counts_toward_circuit():
+    result, requests, tools = await rxnorm_lookup(lambda request: httpx.Response(429, json={}))
+    assert result["status"] == "unavailable"
+    assert result["error"] == RXNORM_RATE_LIMIT_ERROR
+    assert result["items"] == []
+    assert tools.circuits["rxnorm_ingredients"].failures == 1
+    assert len(requests) == 1
+    # A 429 on the second request counts the same way.
+    def second_limited(request):
+        return httpx.Response(200, json={"idGroup": {"rxnormId": ["1"]}}) if request.url.path.endswith("/rxcui.json") else httpx.Response(429)
+    result, _, tools2 = await rxnorm_lookup(second_limited)
+    assert result["error"] == RXNORM_RATE_LIMIT_ERROR
+    assert tools2.circuits["rxnorm_ingredients"].failures == 1
+    await tools.aclose()
+    await tools2.aclose()
+
+
+async def test_rxnorm_rate_limit_does_not_open_other_tools_circuits():
+    _, _, tools = await rxnorm_lookup(lambda request: httpx.Response(429, json={}))
+    assert tools.circuits["label_sections"].failures == 0
+    assert tools.circuits["drug_labels"].failures == 0
+    await tools.aclose()
+
+
+@pytest.mark.parametrize("responder", [
+    lambda request: httpx.Response(503, json={}),
+    lambda request: httpx.Response(200, content=b"<html>Error</html>"),
+    lambda request: httpx.Response(200, json=[]),
+    lambda request: httpx.Response(200, json={"idGroup": {"rxnormId": ["1"]}, "pad": "x" * 270000}),
+])
+async def test_rxnorm_failures_are_unavailable_not_empty(responder):
+    result, _, tools = await rxnorm_lookup(responder)
+    await tools.aclose()
+    assert result["status"] == "unavailable"
+    assert result["items"] == []
+    assert result["error"] != RXNORM_RATE_LIMIT_ERROR
+
+
+async def test_rxnorm_related_response_over_the_byte_cap_is_unavailable():
+    related = {"relatedGroup": {"conceptGroup": []}, "pad": "x" * 270000}
+    result, requests, tools = await rxnorm_lookup(rxnorm_responder({"idGroup": {"rxnormId": ["161"]}}, related))
+    await tools.aclose()
+    assert result["status"] == "unavailable"
+    assert len(requests) == 2
+
+
+async def test_rxnorm_timeout_is_unavailable():
+    def timeout(request):
+        raise httpx.ReadTimeout("slow", request=request)
+    result, _, tools = await rxnorm_lookup(timeout)
+    await tools.aclose()
+    assert result["status"] == "unavailable"
+    assert tools.circuits["rxnorm_ingredients"].failures == 1
+
+
+async def test_rxnorm_open_circuit_makes_no_request():
+    _, _, tools = await rxnorm_lookup(lambda request: httpx.Response(503, json={}))
+    for _ in range(2):
+        await rxnorm_lookup(lambda request: httpx.Response(503, json={}), tools=tools)
+    assert tools.circuits["rxnorm_ingredients"].opened_at is not None
+    seen = []
+    tools.client = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: seen.append(r) or httpx.Response(200, json={})))
+    result, _, _ = await rxnorm_lookup(None, tools=tools)
+    assert result["error"] == "Reference provider temporarily unavailable."
+    assert not seen
+    await tools.aclose()
+
+
+async def test_rxnorm_never_logs_the_query(caplog):
+    caplog.set_level(logging.DEBUG)
+    caplog.set_level(logging.WARNING, logger="httpx")  # the app silences httpx request lines the same way
+    secret = "Zyxwvutsr Medicine"
+    for responder in (
+        rxnorm_responder({"idGroup": {"rxnormId": ["161"]}}, related_group([("161", "acetaminophen")])),
+        lambda request: httpx.Response(429, json={}),
+        lambda request: httpx.Response(503, json={}),
+    ):
+        _, _, tools = await rxnorm_lookup(responder, secret)
+        await tools.aclose()
+    assert secret.lower() not in caplog.text.lower()
+    assert "Zyxwvutsr" not in caplog.text
+
+
+async def test_rxnorm_cancellation_propagates():
+    async def handler(request):
+        raise asyncio.CancelledError
+    service = ReferenceTools(httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    with pytest.raises(asyncio.CancelledError):
+        await service.run("rxnorm_ingredients", {"query": "Tylenol"})
+    assert service.circuits["rxnorm_ingredients"].failures == 0
+    await service.aclose()

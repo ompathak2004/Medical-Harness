@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "file": "growth_lms.json",
+  "sha256": "d96c5e8ae83ea1d0d4f408ad11b57619ab664884865c980e822697b10e6d5f32",
+  "bytes": 61384,
+  "max_bytes": 131072,
+  "retrieved": "2026-10-25",
+  "row_counts": {
+    "who": {
+      "weight_for_age": {
+        "male": 25,
+        "female": 25
+      },
+      "length_for_age": {
+        "male": 25,
+        "female": 25
+      },
+      "head_circumference_for_age": {
+        "male": 25,
+        "female": 25
+      }
+    },
+    "cdc": {
+      "weight_for_age": {
+        "male": 218,
+        "female": 218
+      },
+      "stature_for_age": {
+        "male": 218,
+        "female": 218
+      },
+      "bmi_for_age": {
+        "male": 218,
+        "female": 218
+      }
+    }
+  },
+  "formula": "z = ((X/M)^L - 1)/(L*S), or ln(X/M)/S when L = 0; L, M, S linearly interpolated by age in months",
+  "sources": [
+    {
+      "system": "who",
+      "indicator": "weight_for_age",
+      "sex": "male",
+      "url": "https://ftp.cdc.gov/pub/Health_Statistics/NCHS/growthcharts/WHO-Boys-Weight-for-age-Percentiles.csv",
+      "sha256": "6fcb43be71ced3fb068d992a86f2a50ef7bb4c2b615b4554e67b6371578d0d7f"
+    },
+    {
+      "system": "who",
+      "indicator": "weight_for_age",
+      "sex": "female",
+      "url": "https://ftp.cdc.gov/pub/Health_Statistics/NCHS/growthcharts/WHO-Girls-Weight-for-age%20Percentiles.csv",
+      "sha256": "00a152538466f649d58d66665e8f1fc0ab25bc3157c4706197eb772925ef7cae"
+    },
+    {
+      "system": "who",
+      "indicator": "length_for_age",
+      "sex": "male",
+      "url": "https://ftp.cdc.gov/pub/Health_Statistics/NCHS/growthcharts/WHO-Boys-Length-for-age-Percentiles.csv",
+      "sha256": "42df3d55815c8f55bd64bffdda466913a24caeed6a9b3c7c651569a45b20d6f9"
+    },
+    {
+      "system": "who",
+      "indicator": "length_for_age",
+      "sex": "female",
+      "url": "https://ftp.cdc.gov/pub/Health_Statistics/NCHS/growthcharts/WHO-Girls-Length-for-age-Percentiles.csv",
+      "sha256": "1b06300e72c137078e6fbed4a52238c04e2a3c445665e7f739ae62f34c294911"
+    },
+    {
+      "system": "who",
+      "indicator": "head_circumference_for_age",
+      "sex": "male",
+      "url": "https://ftp.cdc.gov/pub/Health_Statistics/NCHS/growthcharts/WHO-Boys-Head-Circumference-for-age-Percentiles.csv",
+      "sha256": "5af6d648fb119568016fcdc7c53a61687a9cd9093ba100fe44bc0ddf7f5bf8fb"
+    },
+    {
+      "system": "who",
+      "indicator": "head_circumference_for_age",
+      "sex": "female",
+      "url": "https://ftp.cdc.gov/pub/Health_Statistics/NCHS/growthcharts/WHO-Girls-Head-Circumference-for-age-Percentiles.csv",
+      "sha256": "8e95121c0bf437cda44bf6de168a2672c8a387d8343f4001c0dc5afb71b0bcc3"
+    },
+    {
+      "system": "cdc",
+      "indicator": "weight_for_age",
+      "sex": "male+female",
+      "url": "https://www.cdc.gov/growthcharts/data/zscore/wtage.csv",
+      "sha256": "3406c9d125bcb69c062a9e84eb8c0209bfe9346542bdc1d308643750dcc241b7"
+    },
+    {
+      "system": "cdc",
+      "indicator": "stature_for_age",
+      "sex": "male+female",
+      "url": "https://www.cdc.gov/growthcharts/data/zscore/statage.csv",
+      "sha256": "45130d2a9d7c50c54a47e7ba626b66c61d4554bc2d901198cedd9419a53f7251"
+    },
+    {
+      "system": "cdc",
+      "indicator": "bmi_for_age",
+      "sex": "male+female",
+      "url": "https://www.cdc.gov/growthcharts/data/zscore/bmiagerev.csv",
+      "sha256": "cbeea0e8d500ee15c652f3fdc45bcd02cb9c15d4d1e86f4d8048bbfea8d166e5"
+    }
+  ],
+  "licence": "WHO 2006 growth standards and CDC 2000 growth charts as distributed by the US CDC (CDC-authored data are US-government public domain; see NOTICE.md)."
+}

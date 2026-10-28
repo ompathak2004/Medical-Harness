@@ -5,12 +5,16 @@ import { initTheme, toggleTheme } from './theme.js';
 import {
   escapeHtml, escapeAttr, renderMarkdown, renderAnswerBody, safeUrl,
   copyToClipboard, rafThrottle, riskTone, TOOL_FIELD_LABELS,
-  toolCardRows, toolHeadline, inputsText, claimSupportText,
+  toolCardRows, toolHeadline, inputsText, claimSupportText, readSse,
 } from './dom-utils.js';
 import { AnatomyPanel } from './anatomy-panel.js';
 import { educationFor } from './education-catalog.js';
+import { TOOL_CATALOG, toolFor } from './tools-catalog.js';
 const anatomy = new AnatomyPanel(insertAnatomyText);
 const messageAnatomy = new Map();
+const messageTools = new Map(); // msgId -> Map<tool key, result>, so a card button can reopen the tool without a request
+const sessionToolSummaries = new Map(); // tool key -> text the person added to the clinician handoff
+let toolsModule = null;
 
 const chatContainer = document.getElementById('chat-container');
 const chatScrollInner = document.getElementById('chat-scroll-inner');
@@ -136,18 +140,20 @@ function renderEmergencyBanner(data, msgId) {
   appendToChat(wrap.firstElementChild);
 }
 
-function renderToolCard(tr) {
-  if (Array.isArray(tr.items)) {
+function renderToolCard(tr, msgId) {
+  if (Array.isArray(tr.items) && tr.status) { // a reference lookup; a checklist calculator (STEADI) has items but no status
     const links = tr.items.filter(item => safeUrl(item.url)).map(item => `<li><a href="${escapeAttr(safeUrl(item.url))}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.title)}</a>${item.published ? ` <small>${escapeHtml(item.published)}</small>` : ''}</li>`).join('');
     return `<section class="tool-card"><div class="tool-card-body"><div class="tool-card-name">${escapeHtml(tr.tool)}</div><p>${escapeHtml(tr.scope || '')}</p>${links ? `<ul>${links}</ul>` : `<p>${escapeHtml(tr.error || 'No matching references were returned. This does not establish safety or absence of evidence.')}</p>`}</div></section>`;
   }
   const tone = riskTone(tr);
   const [headlineKey, headlineValue, headlineLabel] = toolHeadline(tr);
+  const catalogued = toolFor(tr.key);
+  if (catalogued) { if (!messageTools.has(msgId)) messageTools.set(msgId, new Map()); messageTools.get(msgId).set(tr.key, tr); }
   const rows = toolCardRows(tr, headlineKey);
   const riskValue = tr.risk || tr.category;
 
   let scoreHtml = '';
-  if (headlineKey) {
+  if (headlineKey && headlineKey !== 'summary') {
     scoreHtml = `<div class="tool-card-score tone-${tone}">
       <span class="score-value">${escapeHtml(String(headlineValue))}</span>
       <span class="score-label">${escapeHtml(headlineLabel)}</span>
@@ -168,11 +174,14 @@ function renderToolCard(tr) {
     <div class="tool-card-body">
       <div class="tool-card-name">${escapeHtml(tr.tool || 'Clinical calculator')}</div>
       ${riskBadge}
+      ${headlineKey === 'summary' ? `<p class="tool-card-summary">${escapeHtml(headlineValue)}</p>` : ''}
       ${rowsHtml}
       ${inputsText(tr.inputs) ? `<div class="tool-card-row"><strong>Inputs as supplied:</strong> ${escapeHtml(inputsText(tr.inputs))}</div>` : ''}
+      ${(tr.alerts || []).map(a => `<div class="tool-card-recommendation tool-card-alert">${escapeHtml(a.text)}</div>`).join('')}
       ${tr.recommendation ? `<div class="tool-card-recommendation">${escapeHtml(tr.recommendation)}</div>` : ''}
       ${safeUrl(tr.source) ? `<a class="tool-source" href="${escapeAttr(safeUrl(tr.source))}" target="_blank" rel="noopener noreferrer">Calculator reference ↗</a>` : ''}
       ${tr.error ? `<div class="tool-card-recommendation">${escapeHtml(tr.error)}</div>` : ''}
+      ${catalogued ? `<button type="button" class="visual-launch tool-launch" data-action="open-tool" data-tool="${escapeAttr(tr.key)}" data-msg-id="${escapeAttr(msgId)}">${svg(ICON.layoutGrid)}<span><strong>${escapeHtml((tr.error || tr.missing_inputs?.length) && !tr.hard_stop ? 'Open the tool to complete it' : catalogued.launch)}</strong></span>${svg(ICON.arrowRight)}</button>` : ''}
     </div>
   </div>`;
 }
@@ -269,7 +278,7 @@ function finalizeAnswer(wrap, data, msgId) {
   const guide = data.type === 'answer' && educationFor(data.visual_context);
   if (guide) html += `<button type="button" class="visual-launch" data-action="open-education" data-guide="${escapeAttr(data.visual_context)}">${svg(data.visual_context === 'eye_pressure' ? ICON.eye : ICON.layers)}<span><strong>${escapeHtml(guide.launch)}</strong><small>${escapeHtml(guide.subtitle)}</small></span>${svg(ICON.arrowRight)}</button>`;
   html += `<div class="answer-body">${renderAnswerBody(data.answer || '', currentArticles, msgId)}</div>`;
-  if (data.tool_results?.length) html += `<div class="answer-tools"><div class="section-eyebrow">Tools used</div>${data.tool_results.map(renderToolCard).join('')}</div>`;
+  if (data.tool_results?.length) html += `<div class="answer-tools"><div class="section-eyebrow">Tools used</div>${data.tool_results.map(tr => renderToolCard(tr, msgId)).join('')}</div>`;
   html += renderSourcesGrid(currentArticles, msgId);
   html += renderTraceSection(data.handoff);
   if (data.anatomy_context) html += anatomyToggleButtonHtml(data.anatomy_context, msgId);
@@ -399,7 +408,6 @@ async function sendMessage(text) {
   const msgId = nextMsgId();
   const wrap = createAssistantShell(msgId);
   appendStep(wrap, 'Understanding your question…');
-  let reader;
   let succeeded = false;
   try {
     const resp = await fetch('/api/chat/stream', {
@@ -413,32 +421,16 @@ async function sendMessage(text) {
       throw Object.assign(new Error(detail), { handoff: failedHandoff });
     }
     setOnlineStatus(true);
-    reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    while (!succeeded) {
-      const { done, value } = await reader.read();
-      buffer += decoder.decode(value || new Uint8Array(), { stream: !done }).replace(/\r/g, '');
-      const parts = buffer.split('\n\n');
-      buffer = parts.pop();
-      if (done && buffer.trim()) parts.push(buffer);
-      for (const part of parts) {
-        let eventType = '';
-        const lines = [];
-        for (const line of part.split('\n')) {
-          if (line.startsWith('event:')) eventType = line.slice(6).trim();
-          else if (line.startsWith('data:')) lines.push(line.slice(5).trimStart());
-        }
-        if (!eventType || !lines.length) continue;
-        const data = JSON.parse(lines.join('\n'));
-        if (version !== sessionVersion) return false;
-        if (eventType === 'meta') { conversationId = data.conversation_id; pendingTurnTime = data.request_context?.received_at || null; }
-        if (eventType === 'step') appendStep(wrap, data.message);
-        if (eventType === 'error') throw Object.assign(new Error(data.detail || 'Please try again.'), { handoff: data.handoff });
-        if (eventType === 'result') { handleResult(wrap, msgId, data); succeeded = true; break; }
-      }
-      if (done) break;
-    }
+    let stale = false;
+    await readSse(resp, (eventType, data) => {
+      if (version !== sessionVersion) { stale = true; return true; }
+      if (eventType === 'meta') { conversationId = data.conversation_id; pendingTurnTime = data.request_context?.received_at || null; }
+      if (eventType === 'step') appendStep(wrap, data.message);
+      if (eventType === 'error') throw Object.assign(new Error(data.detail || 'Please try again.'), { handoff: data.handoff });
+      if (eventType === 'result') { handleResult(wrap, msgId, data); succeeded = true; return true; }
+      return false;
+    });
+    if (stale) return false;
     if (!succeeded) throw new Error('The connection ended before your answer was ready. Please try again.');
     return true;
   } catch (error) {
@@ -455,7 +447,6 @@ async function sendMessage(text) {
     return false;
   } finally {
     clearTimeout(timeout);
-    await reader?.cancel().catch(() => {});
     if (version === sessionVersion) { activeRequest = null; setInputDisabled(false); }
   }
 }
@@ -509,6 +500,9 @@ function startNewConversation() {
   messageArticles.clear();
   messageAnswerText.clear();
   messageHandoff.clear();
+  messageTools.clear();
+  sessionToolSummaries.clear();
+  toolsModule?.resetHandoff();
   chatScrollInner.innerHTML = '';
   document.querySelectorAll('.followup-section').forEach(el => el.remove());
   closeArticleSidebar();
@@ -576,7 +570,7 @@ chatContainer.addEventListener('click', e => {
       const entry = messageHandoff.get(el.dataset.msgId);
       if (!entry) break;
       const version = sessionVersion;
-      const context = { receivedAt: entry.receivedAt, conversationId };
+      const context = { receivedAt: entry.receivedAt, conversationId, toolSummaries: [...sessionToolSummaries.values()].map(item => item.text) };
       import('./handoff.js').then(module => { if (version === sessionVersion && el.isConnected) module.openHandoff(entry.handoff, context, el); }).catch(() => { if (version === sessionVersion) systemErrorMessage('The handoff summary could not load. Please try again.'); });
       break;
     }
@@ -597,6 +591,45 @@ chatContainer.addEventListener('click', e => {
   }
 });
 
+// Tools: the header button, the home chips and the chat-card launch buttons share one lazy module.
+function loadTools() {
+  return import('./tools.js').then(module => {
+    if (!toolsModule) {
+      toolsModule = module;
+      module.setHost({ hasChat: () => conversation.length > 0, openHandoff: openToolsHandoff });
+      module.onHandoffChange((key, entry) => { if (entry) sessionToolSummaries.set(key, entry); else sessionToolSummaries.delete(key); });
+    }
+    return module;
+  });
+}
+
+function withTools(action) {
+  const version = sessionVersion;
+  loadTools().then(module => { if (version === sessionVersion) action(module); }).catch(() => { if (version === sessionVersion) systemErrorMessage('The tools could not load. Please try again.'); });
+}
+
+function openToolsHandoff(trigger) {
+  const version = sessionVersion;
+  import('./handoff.js').then(module => {
+    if (version !== sessionVersion) return;
+    module.openHandoff(module.toolsOnlyHandoff(), { receivedAt: null, conversationId, toolSummaries: [...sessionToolSummaries.values()].map(item => item.text) }, trigger);
+  }).catch(() => { if (version === sessionVersion) systemErrorMessage('The handoff summary could not load. Please try again.'); });
+}
+
+function openTool(el) {
+  const key = el.dataset.tool;
+  if (key === 'catalogue') { withTools(module => module.openCatalogue(el)); return; }
+  if (!toolFor(key)) return;
+  const result = messageTools.get(el.dataset.msgId)?.get(key);
+  withTools(module => module.openTool(key, { result, inputs: result?.inputs, trigger: el }));
+}
+
+document.getElementById('tools-btn')?.addEventListener('click', event => withTools(module => module.openCatalogue(event.currentTarget)));
+document.addEventListener('click', event => {
+  const el = event.target.closest('[data-action="open-tool"]');
+  if (el) openTool(el);
+});
+
 chatContainer.addEventListener('mouseover', e => {
   const el = e.target.closest('.citation-ref[data-action="citation-ref"]');
   if (el) showCitationTooltip(el);
@@ -611,6 +644,11 @@ document.querySelectorAll('dialog').forEach(trapDialogFocus);
 hydrateIcons();
 initContext();
 renderHero();
+// Deep link (#tools or #tool=<key>): open once, then drop the hash so Escape does not reopen it.
+const deepLink = location.hash === '#tools' ? 'catalogue' : /^#tool=([a-z_]+)$/.exec(location.hash)?.[1];
+if (deepLink === 'catalogue') withTools(module => module.openCatalogue(null));
+else if (deepLink && Object.hasOwn(TOOL_CATALOG, deepLink)) withTools(module => module.openTool(deepLink, { trigger: null }));
+if (deepLink) history.replaceState(null, '', location.pathname + location.search);
 fetch('/api/health', { signal: AbortSignal.timeout(10000) }).then(r => setOnlineStatus(r.ok)).catch(() => setOnlineStatus(false));
 
 document.getElementById('stop-btn').addEventListener('click', () => activeRequest?.abort());

@@ -20,6 +20,10 @@ The educational guides use original application SVG schematics and paraphrase li
 
 The bundled [`@vercel/analytics`](https://github.com/vercel/analytics) SDK uses the MIT license, preserved in `static/vendor-licenses/vercel-analytics.txt`. Vercel Web Analytics collects anonymous production page views through same-origin endpoints; it does not receive chat contents or clinical tool properties from this application.
 
+## Growth reference data
+
+`app/tools/data/growth_lms.json` bundles the LMS parameters of the [WHO Child Growth Standards 2006](https://www.cdc.gov/growthcharts/who-data-files.htm) (weight, length, and head circumference for age, 0 to 24 months) and the [CDC 2000 growth charts](https://www.cdc.gov/growthcharts/cdc-data-files.htm) (weight, stature, and BMI for age, 2 to 20 years). Both are published by the US Centers for Disease Control and Prevention; the files were retrieved on 2026-10-25 from `ftp.cdc.gov` and `cdc.gov`, and the manifest next to the data records their SHA-256 hashes and the retrieval date. The tables are unchanged apart from being combined into one JSON file. CDC and WHO do not endorse this application, and a percentile is not a diagnosis. `scripts/build_growth_tables.py` rebuilds the file from the same sources.
+
 ## External services
 
 medical-harness calls Cerebras and MediSearch using your own API keys. Their services, returned content, and usage terms are independent of this repository's MIT license.

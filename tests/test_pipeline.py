@@ -2,8 +2,13 @@ import json
 
 import pytest
 
+from app.conversation import CONVERSATION_REPLIES
+from app.handoff import LIMITATION_SHEET
 from app.pipeline import AgentPipeline, CLARIFICATION_INTRO, ReviewUnavailable
+from app.prompts import ANSWER_SYSTEM, WHEN_TO_CALL_REQUEST, WHEN_TO_CALL_SYSTEM
+from app.schemas import Handoff
 from app.tools.education import VISUAL_IDS
+from app.tools.sheets import EMERGENCY_LINE, EMERGENCY_SIGNS, ROUTINE_LINES, build_when_to_call_sheet
 
 
 class FakeLLM:
@@ -611,3 +616,232 @@ class TestEvidenceFailure:
         assert (await p.run(["What is flu?"], "cid"))["evidence_status"] == "unavailable"
         p.evidence = FakeEvidence()
         assert (await p.run(["What is flu?"], "cid"))["evidence_status"] == "available"
+
+
+# ---------------------------------------------------------------- when-to-call sheet mode
+
+SHEET_CONDITION = "heart failure"
+SHEET_TURN = WHEN_TO_CALL_REQUEST.format(condition=SHEET_CONDITION)
+
+
+class RecordingEvidence(FakeEvidence):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.conversations = []
+
+    def search(self, conversation, conversation_id):
+        self.conversations.append(list(conversation))
+        return super().search(conversation, conversation_id)
+
+
+def sheet_pipeline(triage=None, **kwargs):
+    pipeline = make_pipeline(triage or {"action": "answer"}, **kwargs)
+    pipeline.evidence = RecordingEvidence()
+    return pipeline
+
+
+def drafting_systems(pipeline):
+    return [system for _, system in pipeline.llm.calls if system.startswith("You write one section")]
+
+
+class TestWhenToCallMode:
+    async def test_tool_planning_is_skipped_and_the_sheet_prompt_drafts_the_middle_tier(self):
+        p = sheet_pipeline({"action": "answer", "visual": "asthma"}, tools={"selected_tools": ["bmi"]},
+                           anatomy={"scene_id": "chest", "reason": "Explore."})
+        events = await collect_mode(p, [SHEET_TURN])
+        result = events[-1][1]
+        assert events[-1][0] == "result"
+        assert result["type"] == "answer" and result["evidence_status"] == "available"
+        assert result["answer"].startswith("streamed answer")
+        # No tool selection or variable extraction call was made, and no tool ran.
+        systems = [system for _, system in p.llm.calls]
+        assert not any(TOOLS_KEY in system or EXTRACT_KEY in system for system in systems)
+        assert result["tool_results"] == []
+        # The dedicated prompt drafted; the chat answer prompt did not.
+        assert drafting_systems(p) == [WHEN_TO_CALL_SYSTEM]
+        assert ANSWER_SYSTEM not in systems
+        # The model never sees the question as anything but the single templated user turn.
+        assert p.evidence.conversations == [[SHEET_TURN]]
+        steps = {s["name"]: s for s in result["handoff"]["trace"]["steps"]}
+        assert steps["tools"] == {"name": "tools", "status": "skipped", "elapsed_ms": 0, "detail": ""}
+        assert [steps[n]["status"] for n in ("triage", "evidence", "draft", "review")] == ["ok"] * 4
+
+    async def test_result_carries_the_fixed_sheet_and_no_visuals(self):
+        p = sheet_pipeline({"action": "answer", "visual": "asthma"}, anatomy={"scene_id": "chest", "reason": "Explore."})
+        result = await p.run([SHEET_TURN], "sheet", mode="when_to_call")
+        assert result["sheet"] == build_when_to_call_sheet()
+        assert result["sheet"]["kind"] == "when_to_call" and result["sheet"]["middle_tier_source"] == "answer"
+        assert result["visual_context"] is None
+        assert result["anatomy_context"] is None
+        assert result["followups"] == []
+
+    async def test_chat_mode_is_unchanged(self):
+        p = sheet_pipeline({"action": "answer", "visual": "asthma"})
+        result = await p.run(["What is asthma?"], "chat")
+        assert "sheet" not in result
+        assert result["visual_context"] == "asthma"
+        assert [system for _, system in p.llm.calls if TOOLS_KEY in system]
+        assert ANSWER_SYSTEM in {system for _, system in p.llm.calls}
+        assert not drafting_systems(p)
+        assert LIMITATION_SHEET not in result["handoff"]["limitations"]
+
+    async def test_handoff_states_the_sheet_limitation(self):
+        result = await sheet_pipeline().run([SHEET_TURN], "sheet", mode="when_to_call")
+        handoff = result["handoff"]
+        assert handoff["reason"] == "answer_available"
+        assert handoff["limitations"].count(LIMITATION_SHEET) == 1
+        assert handoff["limitations"][-1] != LIMITATION_SHEET  # citations line stays last
+        Handoff(**handoff)
+
+    async def test_emergency_in_the_condition_ends_with_the_fixed_result(self):
+        p = sheet_pipeline({"action": "emergency"})
+        events = await collect_mode(p, [WHEN_TO_CALL_REQUEST.format(condition="crushing chest pressure now")])
+        result = events[-1][1]
+        assert result["type"] == "emergency" and result["emergency"] is True
+        assert result.get("sheet") is None
+        assert result["articles"] == [] and result["tool_results"] == []
+        assert len(p.llm.calls) == 1 and TRIAGE_KEY in p.llm.calls[0][1]
+        assert p.evidence.conversations == []
+        assert not any(e[0] == "answer_chunk" for e in events)
+
+    async def test_triage_runs_before_anything_else(self):
+        p = sheet_pipeline()
+        await p.run([SHEET_TURN], "sheet", mode="when_to_call")
+        assert TRIAGE_KEY in p.llm.calls[0][1]
+
+    async def test_clarification_path_is_unchanged(self):
+        p = sheet_pipeline({"action": "ask", "follow_up_questions": ["Which surgery?"]})
+        result = await p.run([SHEET_TURN], "sheet", mode="when_to_call")
+        assert result["type"] == "follow_up" and result["follow_up_questions"] == ["Which surgery?"]
+        assert result.get("sheet") is None and result["answer"] is None
+        assert p.evidence.conversations == []
+        assert not drafting_systems(p)
+
+    async def test_unclear_conversation_kind_returns_the_fixed_reply(self):
+        p = sheet_pipeline({"action": "conversation", "conversation_kind": "unclear"})
+        result = await p.run([SHEET_TURN], "sheet", mode="when_to_call")
+        assert result["type"] == "conversation" and result["answer"] == CONVERSATION_REPLIES["unclear"]
+        assert result.get("sheet") is None and p.evidence.conversations == []
+
+    async def test_unavailable_evidence_keeps_the_fixed_tiers_but_marks_the_middle_tier_unavailable(self):
+        p = sheet_pipeline()
+        p.evidence = FakeEvidence(articles=[])
+        events = await collect_mode(p, [SHEET_TURN])
+        result = events[-1][1]
+        assert result["evidence_status"] == "unavailable" and result["articles"] == []
+        assert result["sheet"]["middle_tier_source"] == "unavailable"
+        assert result["sheet"]["emergency_signs"] and result["sheet"]["routine_lines"]
+        assert not drafting_systems(p)
+        assert not any(e[0] == "answer_chunk" for e in events)
+        assert LIMITATION_SHEET in result["handoff"]["limitations"]
+
+    async def test_review_failure_publishes_nothing(self):
+        p = sheet_pipeline(safety={"is_safe": False})
+        events = []
+        with pytest.raises(ReviewUnavailable) as caught:
+            async for event in p.run_streaming([SHEET_TURN], "sheet", mode="when_to_call"):
+                events.append(event)
+        assert not any(event[0] in {"result", "answer_chunk"} for event in events)
+        assert LIMITATION_SHEET not in caught.value.handoff["limitations"]
+
+    async def test_safety_review_runs_before_the_answer_is_sent(self):
+        p = sheet_pipeline()
+        kinds = [event async for event in p.run_streaming([SHEET_TURN], "sheet", mode="when_to_call")]
+        order = [kind for kind, _ in kinds]
+        assert any(SAFETY_KEY in system for _, system in p.llm.calls)
+        assert order.index("answer_chunk") < order.index("result")
+        assert ("step", {"step": "safety", "message": "Verifying answer safety…"}) in kinds
+
+    async def test_citations_must_point_at_retrieved_sources(self):
+        p = sheet_pipeline()
+        p.llm.stream_text = "Call if you gain weight quickly [7]."
+        with pytest.raises(ReviewUnavailable):
+            await p.run([SHEET_TURN], "sheet", mode="when_to_call")
+
+    async def test_safety_revision_is_used(self):
+        p = sheet_pipeline(safety={"is_safe": False, "issues": ["x"], "revised_answer": "Revised warning signs [1]."})
+        result = await p.run([SHEET_TURN], "sheet", mode="when_to_call")
+        assert result["answer"] == "Revised warning signs [1]."
+        assert result["sheet"]["kind"] == "when_to_call"
+
+    def test_the_sheet_prompt_asks_for_one_cited_tier_and_the_fixed_closing_line(self):
+        assert "Call your care team today if" in WHEN_TO_CALL_SYSTEM
+        assert "If your discharge paper gives different numbers, use those." in WHEN_TO_CALL_SYSTEM
+        assert "5 to 10" in WHEN_TO_CALL_SYSTEM
+        for key in (TRIAGE_KEY, TOOLS_KEY, SAFETY_KEY, EXTRACT_KEY):
+            assert key not in WHEN_TO_CALL_SYSTEM
+        assert "{condition}" in WHEN_TO_CALL_REQUEST
+
+    def test_fixed_tiers_cover_the_triage_red_flags_and_hold_no_personal_data(self):
+        assert len(EMERGENCY_SIGNS) == 8
+        assert EMERGENCY_LINE == "Call your local emergency number now; do not wait for an online answer."
+        assert len(ROUTINE_LINES) == 3
+        text = " ".join([*EMERGENCY_SIGNS, EMERGENCY_LINE, *ROUTINE_LINES]).lower()
+        for phrase in ("chest pain", "slurred speech", "throat", "bleeding", "harming yourself", "seizure", "stiff neck", "eye pain"):
+            assert phrase in text
+        sheet = build_when_to_call_sheet()
+        sheet["emergency_signs"].append("mutated")
+        assert "mutated" not in build_when_to_call_sheet()["emergency_signs"]
+
+
+async def collect_mode(pipeline, conversation):
+    return [event async for event in pipeline.run_streaming(conversation, "test-conv", mode="when_to_call")]
+
+
+# ---------------------------------------------------------------- rxnorm_ingredients in chat
+
+RXNORM_RESULT = {
+    "tool": "RxNorm ingredients", "status": "available", "combination": False, "rxcui": "202433",
+    "items": [{"title": "acetaminophen", "url": "https://mor.nlm.nih.gov/RxNav/search?searchBy=RXCUI&searchTerm=161",
+               "rxcui": "161", "tty": "IN"}],
+}
+
+
+class RxNormReferences:
+    def __init__(self, result=None):
+        self.calls = []
+        self.result = result or RXNORM_RESULT
+
+    async def run(self, key, variables):
+        self.calls.append((key, dict(variables)))
+        return self.result
+
+
+def rxnorm_pipeline(articles=None, result=None):
+    p = make_pipeline({"action": "answer"}, tools={"selected_tools": ["rxnorm_ingredients"]}, extract={"query": "Tylenol"})
+    p.references = RxNormReferences(result)
+    if articles is not None:
+        p.evidence = FakeEvidence(articles=articles)
+    return p
+
+
+class TestRxNormInChat:
+    async def test_runs_through_the_reference_branch_and_is_cached_per_conversation(self):
+        p = rxnorm_pipeline()
+        first = await p.run(["What is in Tylenol?"], "c1")
+        await p.run(["What is in Tylenol?"], "c2")
+        assert p.references.calls == [("rxnorm_ingredients", {"query": "Tylenol"})]
+        assert first["tool_results"] == [RXNORM_RESULT]
+        assert first["handoff"]["references"][0]["tool"] == "RxNorm ingredients"
+        assert first["handoff"]["calculations"] == []
+
+    async def test_ingredient_items_never_become_evidence(self):
+        p = rxnorm_pipeline()
+        result = await p.run(["What is in Tylenol?"], "c")
+        assert [a["title"] for a in result["articles"]] == ["Study A"]
+        assert not any(item["title"] == "acetaminophen" for item in result["articles"])
+        assert p._reference_sources([RXNORM_RESULT]) == []
+
+    async def test_with_no_other_sources_the_answer_is_not_written(self):
+        p = rxnorm_pipeline(articles=[])
+        result = await p.run(["What is in Tylenol?"], "c")
+        assert result["evidence_status"] == "unavailable" and result["articles"] == []
+        assert result["handoff"]["reason"] == "evidence_unavailable"
+        assert not any(system for _, system in p.llm.calls if system == ANSWER_SYSTEM)
+
+    async def test_unavailable_lookup_is_flagged_not_concluded(self):
+        down = {"tool": "RxNorm ingredients", "status": "unavailable", "items": [], "error": "Reference lookup could not be completed."}
+        result = await rxnorm_pipeline(result=down).run(["What is in Tylenol?"], "c")
+        steps = {s["name"]: s for s in result["handoff"]["trace"]["steps"]}
+        assert (steps["tools"]["status"], steps["tools"]["detail"]) == ("fallback", "partial")
+        assert "RxNorm ingredients could not be reached; this says nothing about the medicine." in result["handoff"]["limitations"]

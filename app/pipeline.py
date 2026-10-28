@@ -7,6 +7,7 @@ import inspect
 from contextvars import ContextVar
 from collections import Counter
 from collections.abc import AsyncIterator
+from typing import Literal
 
 from app.cache import TTLCache, text_key
 from app.answer_format import remove_source_appendix
@@ -28,11 +29,13 @@ from app.prompts import (
     TRIAGE_USER,
     VARIABLE_EXTRACTION_SYSTEM,
     VARIABLE_EXTRACTION_USER,
+    WHEN_TO_CALL_SYSTEM,
 )
 from app.tools.anatomy import select_anatomy
 from app.tools.education import select_visual
 from app.tools.clinical import TOOL_REGISTRY
 from app.tools.references import REFERENCE_TOOLS
+from app.tools.sheets import build_when_to_call_sheet
 
 logger = logging.getLogger(__name__)
 cache_scope = ContextVar("cache_scope", default="internal")
@@ -139,6 +142,7 @@ class AgentPipeline:
         )
         self._outcomes: Counter[str] = Counter()
         self.policy_version = text_key(TRIAGE_SYSTEM, TOOL_SELECTION_SYSTEM, VARIABLE_EXTRACTION_SYSTEM, ANSWER_SYSTEM, SAFETY_SYSTEM,
+                                       WHEN_TO_CALL_SYSTEM,
                                        *(f"{key}:{info['description']}" for key, info in self.tools.items()))
 
 
@@ -149,19 +153,22 @@ class AgentPipeline:
         )
 
 
-    async def run(self, conversation: list[str], conversation_id: str) -> dict:
+    async def run(self, conversation: list[str], conversation_id: str,
+                  mode: Literal["chat", "when_to_call"] = "chat") -> dict:
 
         result: dict | None = None
-        async for event_type, data in self.run_streaming(conversation, conversation_id):
+        async for event_type, data in self.run_streaming(conversation, conversation_id, mode):
             if event_type == "result":
                 result = data
         assert result is not None
         return result
 
     async def run_streaming(
-        self, conversation: list[str], conversation_id: str
+        self, conversation: list[str], conversation_id: str,
+        mode: Literal["chat", "when_to_call"] = "chat",
     ) -> AsyncIterator[tuple[str, dict]]:
 
+        sheet_mode = mode == "when_to_call"
         t0 = time.monotonic()
         trace = _RunTrace()
         tool_results: list[dict] = []
@@ -234,14 +241,22 @@ class AgentPipeline:
                     return
 
 
-            yield ("step", {"step": "tools", "message": "Checking relevant tools and sources…"})
             tools_info: dict = {}
             evidence_info: dict = {}
-            tool_results, evidence_result = await asyncio.gather(
-                trace.timed("tools", self._run_tools(conv_text, tools_info)),
-                trace.timed("evidence", self._retrieve_evidence(conversation, conversation_id, evidence_info)),
-            )
-            if tools_info.get("failed"):
+            if sheet_mode:
+                # The sheet's tiers are fixed or cited; no calculator or reference lookup is planned.
+                yield ("step", {"step": "tools", "message": "Checking relevant sources…"})
+                evidence_result = await trace.timed(
+                    "evidence", self._retrieve_evidence(conversation, conversation_id, evidence_info))
+            else:
+                yield ("step", {"step": "tools", "message": "Checking relevant tools and sources…"})
+                tool_results, evidence_result = await asyncio.gather(
+                    trace.timed("tools", self._run_tools(conv_text, tools_info)),
+                    trace.timed("evidence", self._retrieve_evidence(conversation, conversation_id, evidence_info)),
+                )
+            if sheet_mode:
+                trace.finish("tools", "skipped")
+            elif tools_info.get("failed"):
                 trace.finish("tools", "failed", "selection_failed")
             elif not tools_info.get("selected"):
                 trace.finish("tools", "skipped")
@@ -276,7 +291,8 @@ class AgentPipeline:
                 yield ("result", _empty_result(
                     answer="I couldn’t retrieve supporting medical sources for this question. Please try again, or discuss your symptoms with a healthcare professional. If symptoms are severe or rapidly worsening, seek urgent care.",
                     evidence_status="unavailable",
-                    handoff=handoff("evidence_unavailable", tool_results=tool_results),
+                    handoff=handoff("evidence_unavailable", tool_results=tool_results, sheet=sheet_mode),
+                    **({"sheet": build_when_to_call_sheet("unavailable")} if sheet_mode else {}),
                 ))
                 return
 
@@ -290,7 +306,7 @@ class AgentPipeline:
             answer_chars = 0
             over_budget = False
             try:
-                async for chunk in self.llm.generate_stream(answer_user, system=ANSWER_SYSTEM):
+                async for chunk in self.llm.generate_stream(answer_user, system=WHEN_TO_CALL_SYSTEM if sheet_mode else ANSWER_SYSTEM):
                     answer_parts.append(chunk)
                     answer_chars += len(chunk)
                     if answer_chars > self.max_answer_chars:
@@ -320,8 +336,11 @@ class AgentPipeline:
                 trace.finish("review", "fallback", "revised_once")
             else:
                 trace.finish("review", "ok")
-            visual_context = select_visual(triage.get("visual"))
-            anatomy_context = None if visual_context == "eye_pressure" else select_anatomy(triage.get("anatomy"))
+            if sheet_mode:
+                visual_context = anatomy_context = None
+            else:
+                visual_context = select_visual(triage.get("visual"))
+                anatomy_context = None if visual_context == "eye_pressure" else select_anatomy(triage.get("anatomy"))
             yield ("answer_chunk", {"text": answer})
 
             logger.info(
@@ -344,10 +363,11 @@ class AgentPipeline:
                 answer=answer,
                 articles=articles,
                 tool_results=tool_results,
-                followups=evidence_result.get("followups", []),
+                followups=[] if sheet_mode else evidence_result.get("followups", []),
                 anatomy_context=anatomy_context,
                 visual_context=visual_context,
-                handoff=handoff(reason, tool_results=tool_results, articles=articles, answer=answer),
+                handoff=handoff(reason, tool_results=tool_results, articles=articles, answer=answer, sheet=sheet_mode),
+                **({"sheet": build_when_to_call_sheet()} if sheet_mode else {}),
             ))
         except ReviewUnavailable as exc:
             exc.handoff = handoff("review_unavailable", tool_results=tool_results, articles=articles)

@@ -7,6 +7,7 @@ Emergency triage precedes all tools. The planner selects at most two relevant to
 | MediSearch | Conversation → sources and excerpts | Missing evidence is explicit |
 | DailyMed labels | Named medicine → up to three US label links/dates | Directory only, no interaction or dosing claim |
 | FDA label sections | One named medicine → boxed warning, indications, contraindications, warnings, adverse reactions from the newest single-ingredient US label (openFDA) | Exact product only; combination products are flagged, not quoted; interactions section is reported as present, never quoted; no interaction or dosing claim |
+| RxNorm ingredients | One named medicine → active ingredient(s) via RxNav (exact, then normalised name match; no approximate matching) | Names only (no four-digit runs); not an interaction check, dosing, or product confirmation; items never become evidence |
 | PubMed lookup | Topic → up to three indexed abstracts via Europe PMC | Explicit research requests, not systematic review |
 | Adult BMI | Age, height, weight → BMI and CDC category | Age 20+, not pediatric/pregnancy classification |
 | CKD-EPI 2021 eGFR | Adult age, equation sex, creatinine → eGFR | Stable creatinine; not AKI, pregnancy, CKD diagnosis or dosing |
@@ -18,6 +19,17 @@ Emergency triage precedes all tools. The planner selects at most two relevant to
 | Two-level Wells DVT | All criteria explicitly supplied → score and likelihood | Requires examination; cannot rule out a clot |
 | CHA2DS2-VASc | Confirmed AF and supplied factors → score | No treatment recommendation |
 | MRC muscle strength | Examined integer grade → description | No grade inferred from symptoms |
+| Child dose check | Medicine, concentration, weight, age → the amount printed in the AAP weight-band table | Acetaminophen and ibuprofen only; no calculation from weight; hard stop for young babies, mismatched concentration, and weights outside the table |
+| Oral rehydration planner | Weight and age → NICE and CDC maintenance volumes | Age 1 month or older; not a dehydration assessment |
+| Lab result reader | Value, units, and the range printed on the report → position, unit conversion | No range table of its own; not an interpretation |
+| Peak-flow zone | Personal best and reading → NHLBI zone | Uses the person's own plan wording; no medicine advice |
+| Heart-failure weight check | Two weights → change against the AHA threshold | Not a diagnosis; the person's own plan wins |
+| Growth percentile | Sex, age, measurement → WHO or CDC percentile and curve | Bundled tables verified by hash before use; refuses head circumference from 24 months; not a diagnosis |
+| Child BMI percentile | Sex, age, weight, height → CDC BMI-for-age percentile | Ages 2 to 20; not a weight category |
+| STEADI fall-risk checklist | Twelve explicit answers → score and CDC wording | All items required; not an assessment |
+| Home blood-pressure log | Readings → seated morning and evening averages, ACC/AHA band for discussion, standing-drop flag | Alert for any reading above 180/120; no target or diagnosis |
+| Glucose log pattern | Readings → time-of-day grid against ADA general goals | Alerts below 70 and above 250 mg/dL; no insulin or dose advice |
+| Medication schedule | Medicine list → morning, noon, evening, bedtime grid and shared-ingredient flag | RxNorm names only; not an interaction check or dosing advice; works without RxNorm using typed names |
 | Anatomy | Spatially useful question → reference scene | No patient findings, diagnosis or inferred laterality |
 | Imaging report guide | Report question → context, findings, and impression explanation | Text only; no image upload or scan interpretation |
 | Blood pressure guide | Measurement question → systolic, diastolic, and repeat-reading explanation | Illustrative values, no personal category or treatment target |
@@ -36,6 +48,9 @@ Calculator results include source, scope, and the inputs as supplied. Tests cove
 | Partial stream, review failure or invalid citations | Discard draft, return error |
 | Reference endpoint fails | Explicit unavailable result, not a clinical negative |
 | Label service rate limit (HTTP 429) | Tool reports `unavailable` with a try-again message and counts toward the circuit breaker; the answer continues from other sources |
+| RxNorm service rate limit (HTTP 429) | Tool reports `unavailable` with a try-again message and counts toward its circuit breaker; the answer continues from other sources |
+| RxNorm returns an invalid identifier or no match | Tool reports `empty`; an invalid RxCUI is rejected before a second request; the handoff says an empty result is not evidence of safety |
+| When-to-call sheet request | Same fail-closed path as chat: an emergency, clarification, or missing evidence returns its fixed result with no sheet; a failed review discards the draft. The emergency and routine tiers are server constants, so a model failure can never alter them |
 | Only combination products match a medicine name | Label tool reports `empty` with `combination_only`; no label text is shown or cited and the handoff says why |
 | Graphics/download failure | Keep searchable structures and text input |
 

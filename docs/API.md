@@ -21,7 +21,21 @@ Both chat endpoints accept JSON with `conversation` and an optional `conversatio
 }
 ```
 
-`conversation` is a nonempty list of strings: user, assistant, user, and so on. It must end with the user's message. The server limits the conversation to 39 messages and each message to 8,000 characters by default. Reuse the returned `conversation_id` for follow-up requests.
+`conversation` is a nonempty list of strings: user, assistant, user, and so on (omitted only for a [sheet request](#when-to-call-sheet-request)). It must end with the user's message. The server limits the conversation to 39 messages and each message to 8,000 characters by default. Reuse the returned `conversation_id` for follow-up requests.
+
+### When-to-call sheet request
+
+Both chat endpoints also accept a `sheet` field in place of a conversation:
+
+```json
+{
+  "sheet": {"kind": "when_to_call", "condition": "heart failure"}
+}
+```
+
+`kind` is always `"when_to_call"`. `condition` is 3 to 200 characters of letters, digits, spaces, and basic punctuation (`, . ' ( ) / & + -`) with no run of four digits, so dates, phone numbers, and identifiers are rejected with 422; unknown fields are rejected too. When `sheet` is present `conversation` must be omitted or empty and `user_turn_times` must be empty, otherwise the route returns 400 `{"detail": "A sheet request must not include a conversation."}`; without `sheet`, an empty conversation is still a 422. The server builds the single user turn itself from a fixed template ("Make a when-to-call sheet for someone recently discharged after: {condition}. List warning signs that mean they should call their care team the same day."). Names, phone numbers, and a person's own thresholds are never part of a request; the browser adds them to the printed sheet.
+
+The request runs the normal pipeline in sheet mode: emergency triage first (an emergency, a clarification, or a conversation result is returned exactly as in chat and carries no `sheet`), no tool planning (the `tools` trace step is `skipped`), source retrieval for the templated turn, a dedicated drafting prompt for the middle tier only, then the unchanged safety review. `visual_context` and `anatomy_context` are `null`.
 
 `POST /api/chat` waits for a JSON response. For example:
 
@@ -32,6 +46,22 @@ curl -X POST http://localhost:8080/api/chat \
 ```
 
 The response has `type` (`answer`, `follow_up`, `emergency`, or `conversation`), `conversation_id`, `answer`, `articles`, `tool_results`, `followups`, `anatomy_context`, and emergency or clarification fields. A `conversation` result handles greetings, thanks, help requests, unclear messages, and unrelated requests with a short reply in `answer`. It has no articles or calculator results and uses `evidence_status: "not_applicable"`. See `app/schemas.py` for exact optional fields and defaults.
+
+In sheet mode the `answer` result also carries `sheet`, which is `null` or absent on every other result (including emergency, clarification, and evidence-unavailable results):
+
+```json
+{
+  "sheet": {
+    "kind": "when_to_call",
+    "emergency_signs": ["Chest pain or pressure, ...", "..."],
+    "emergency_line": "Call your local emergency number now; do not wait for an online answer.",
+    "routine_lines": ["Keep your follow-up appointment.", "..."],
+    "middle_tier_source": "answer"
+  }
+}
+```
+
+`emergency_signs`, `emergency_line`, and `routine_lines` are fixed server constants (`app/tools/sheets.py`; the signs restate the triage red flags in patient wording). The reviewed, cited middle tier ("Call your care team today if") is `answer`, with its sources in `articles`; `middle_tier_source` names that field. When evidence is unavailable the result still carries the fixed tiers with `middle_tier_source: "unavailable"` and no `answer` text; the browser prints blank ruled lines for the middle tier. The handoff's `limitations` adds a line stating that the middle tier was written from retrieved sources and reviewed, that the other tiers are fixed, and that names, numbers, and personal thresholds were added in the browser and never sent.
 
 ### Time and country context
 
@@ -147,4 +177,63 @@ The default aggregate conversation limit is 32,000 characters and request body l
 
 The `FDA label sections` tool (`label_sections`, openFDA) returns, for one named medicine, a result with `status`, `product`, `generic_name`, `effective_time`, `set_id`, a DailyMed `url` built from the set ID, `has_interactions_section` (presence only; the interactions text is never quoted), and `items`. Each item is one section in fixed order (`boxed_warning`, `indications_and_usage`, `contraindications`, `warnings_and_precautions` or `warnings`, `adverse_reactions`) with `title`, `section`, `url`, `year`, `journal`, `source`, `tldr` (HTML stripped, at most 1,000 characters), and `evidence_kind: "label_section"`. If only combination products match the name, the result has `status: "empty"`, `combination_only: true`, an `error` explaining why, and no items. If rows match but none can be confirmed as a single-ingredient product (missing or ambiguous ingredient metadata), the result is `status: "empty"` with an `error` and no `combination_only` flag. A rate limit (HTTP 429) gives `status: "unavailable"` with a try-again message.
 
+The `RxNorm ingredients` tool (`rxnorm_ingredients`, RxNav at `rxnav.nlm.nih.gov`, no key) resolves one explicitly named medicine to its active ingredients; it is not an interaction check, dosing, or a product confirmation. The query is 1 to 60 characters of letters, digits, spaces, and hyphens, starting with a letter and with no run of four digits. It makes at most two requests inside the 8-second budget: an exact-then-normalised name match (`rxcui.json?name=...&search=2`, no approximate matching, so a misspelling is `empty` rather than a guess), then `rxcui/<id>/related.json?tty=IN+MIN` for the first match. Identifiers must be 1 to 8 digits; an invalid one gives `status: "empty"` without a second request. The result has `status`, `rxcui` (the matched concept), `combination`, and `items`, each `{"title": <ingredient name>, "url": <RxNav page for that RxCUI>, "rxcui", "tty": "IN"}`. `combination` is `true` when the match has two or more ingredients; the combination concepts (`tty: "MIN"`) are then added to `items`. A single ingredient is never flagged just because RxNorm lists combinations that contain it. Items carry no `tldr`, so they never become numbered evidence. A rate limit (HTTP 429) gives `status: "unavailable"` with a try-again message and counts toward the circuit breaker.
+
 PubMed abstracts and official label sections (any reference item with a `tldr` excerpt) may join the numbered article list or supply evidence when the primary provider is unavailable or fails. Label sections come first (at most 5), then abstracts, then the primary sources fill the rest; when they change the numbering the primary retrieval summary is dropped. The combined list remains bounded by `MAX_EVIDENCE_ARTICLES`, and all claims still pass answer review. Directory-only label results cannot replace medical evidence. Failed lookups return an explicit limitation; they never mean a medicine is safe or that no research exists.
+
+## Tools endpoint
+
+The patient tools run without a language model. `GET /api/tools` lists them and `POST /api/tools/{key}` runs one. The `POST` requests count toward the `/api/tools` rate limit (`TOOL_RATE_LIMIT_REQUESTS` per client per window, counted separately from `/api/chat`); the listing is not counted. Reference tools (`drug_labels`, `pubmed_search`, `label_sections`, `rxnorm_ingredients`) are not exposed here; they return 404 like any unknown key. The server logs the tool key and one of `ok`, `error`, `unavailable`, never the inputs.
+
+`GET /api/tools` returns `{"tools": [{"key", "name", "description", "variables", "source", "scope", "kind"}]}`, where `kind` is `calculator` (the 18 tools in `app/tools/clinical.py` and `growth.py`) or `form` (`bp_log_summary`, `glucose_log_pattern`, `medication_schedule`). `variables` lists the input field names.
+
+```json
+POST /api/tools/child_dose_check
+{"inputs": {"medicine": "acetaminophen", "concentration": "160mg/5mL", "weight": 14, "weight_units": "kg", "age_months": 36}}
+
+200 {"tool_key": "child_dose_check", "result": {"tool": "...", "key": "child_dose_check", "source": "https://...", "scope": "...", "inputs": {}, "amount_ml": 5}}
+```
+
+The body is `{"inputs": {...}}` and nothing else (extra fields give 422). A tool that cannot compute still returns 200 with `result.error` (a fixed sentence) and, for absent fields, `result.missing_inputs`. An error result never carries a computed value next to `error`. Every result has `tool`, `key` (the tool key), `source`, and `scope`; a successful one also echoes the validated `inputs`.
+
+Common rules: text inputs are 1 to N characters starting with a letter or digit (`%`, `µ`, `μ` also allowed), with no run of four or more digits; weights and ages are checked for range; strings are never accepted for numbers; booleans never count as numbers.
+
+### Calculators (`kind: "calculator"`)
+
+| Key | Result fields on success |
+| --- | --- |
+| `child_dose_check` (inputs `medicine`, `concentration`, `weight`, `weight_units`, `age_months`) | `medicine`, `concentration`, `weight_kg`, `weight_lb`, `band_low_lb`, `band_high_lb`, `band_low_kg`, `band_high_kg`, `amount_ml`, `amount_mg`, `interval_hours_low`, `interval_hours_high`, `max_doses_24h`, `near_band_edge`, `notes[]`, `summary`, `syringe {capacity_ml, amount_ml}`, `combination_warning`, `recommendation`, `source` |
+| `ors_planner` (inputs `weight`, `weight_units`, `age_months`) | `weight_kg`, `per_stool_ml`, `per_stool_rule`, `cdc_per_episode_ml {low, high}`, `cdc_per_episode_rule`, `teaspoon_timer {ml_per_sip, seconds_between_low, seconds_between_high}`, `summary`, `red_flags[]`, `recommendation`, `risk_note` (only under 6 months) |
+| `lab_result_reader` (inputs `test_name`, `analyte`, `value`, `units`, `range_kind`, `range_low`, `range_high`, `flag_on_report`) | `analyte`, `status` (`below`, `within`, `above`), `position {low, high, value, fraction}`, `converted {value, units}` and `converted_range {low, high, units}` (only for known analyte and unit pairs), `word_help {term, text}` or `null`, `questions[3]`, `summary` |
+| `peak_flow_zone` (inputs `personal_best_l_min`, `reading_l_min`) | `value` (percent of best, rounded down), `units`, `zone` (`green`, `yellow`, `red`), `zones[{label, low_pct, high_pct, low_l_min, high_l_min}]`, `recommendation`, `alerts[]` (red only) |
+| `hf_weight_zone` (inputs `weight_now`, `weight_before`, `weight_units`, `interval`) | `value` (signed change in the supplied units), `units`, `change_kg`, `change_lb`, `direction` (`gain`, `loss`, `none`), `threshold {lb, kg, interval}`, `zone` (`within`, `call_team`), `recommendation`, `alerts[]` (`call_team` only). Weights more than 20 % apart give an `error` with no result fields; the `call_team` alert is kept when the gain still crosses the threshold |
+| `growth_percentile` (inputs `sex`, `age_months`, `measure`, `value`) | `value`, `units`, `z`, `percentile`, `percentile_text`, `reference` (`WHO 2006` under 24 months, `CDC 2000` from 24), `z_method` (`who_lms`, `who_modified`, `cdc_lms`), `flag`, `flag_text`, `curve[{age_months, p3, p15, p50, p85, p97}]` (25 points for WHO, 217 for CDC), `point {age_months, value}`, `measure`, `source`, `summary` |
+| `child_bmi_percentile` (inputs `sex`, `age_months`, `weight_kg`, `height_cm`) | as `growth_percentile` without `measure`, plus `reference_lines {p5, p85, p95}` and `recommendation` |
+| `estimated_glucose` (input `a1c_percent`) | unchanged `value`, `units`, `mmol_l`, plus `line[{a1c, eag}]` (A1c 5 to 12 in steps of 0.5) and `point {a1c, eag}` |
+| `steadi_fall_risk` (12 booleans) | `score`, `max_score` (14), `at_risk` (score of 4 or more), `talk_anyway`, `talk_anyway_text`, `items[{key, text, answer, points}]`, `recommendation`, `home_hazards[]` |
+
+Details a client needs:
+
+- `child_dose_check` returns the amount printed in the American Academy of Pediatrics weight-band tables; it is never calculated from a weight. A hard stop (baby too young, concentration mismatch, weight outside the table, age 12 or over) is an `error` plus `hard_stop {title, text, urgent}`; no amount fields are present. `urgent: true` is used under 3 months (same-day call) whatever the medicine. The age stops run before input validation, so a missing or unknown concentration never hides them. The syringe `capacity_ml` is 5, 10, or 15. Weight is range-checked per unit (2 to 60 kg, 4 to 132 lb). The 50 mg/1.25 mL drops table ends at 59 lb.
+- `ors_planner` refuses ages under one month. `seconds_between_low` and `seconds_between_high` bound the teaspoon timer (60 and 120 seconds).
+- `lab_result_reader`: `flag_on_report` may be an empty string. For a one-sided range (`range_kind` of `below` or `above`) send the limit in both `range_low` and `range_high`; differing values are an error. The result then has a `null` bound on the unused side and `fraction: null`. For `between`, `range_low` must be below `range_high`. `fraction` is clipped to -0.5 to 1.5. `word_help` is `null` unless the flag matches the glossary.
+- `peak_flow_zone` refuses a reading more than 30 % above the personal best. `hf_weight_zone` refuses weights more than 20 % apart.
+- `growth_percentile` refuses head circumference from 24 months. Percentile text is capped as "fewer than 1 of 1,000" and "more than 999 of 1,000". If the bundled tables fail their SHA-256 or size check, both growth tools return the error `Growth reference tables are unavailable; no percentile was computed.` and no number. `child_bmi_percentile` refuses a BMI outside 6 to 80.
+- `steadi_fall_risk` needs all 12 booleans (`fallen_past_year`, `uses_or_advised_cane_walker`, `unsteady_walking`, `steadies_on_furniture`, `worried_about_falling`, `pushes_with_hands_to_stand`, `trouble_stepping_up_curb`, `rushes_to_toilet`, `lost_feeling_in_feet`, `medicine_causes_lightheaded_or_tired`, `medicine_for_sleep_or_mood`, `often_sad_or_depressed`); a missing one gives `missing_inputs`.
+
+### Form tools (`kind: "form"`)
+
+Form inputs are lists, so they are only accepted through this endpoint. A bad field gives `error: "Invalid or out-of-range input: <field path>."` and no other result fields. Missing top-level fields give `missing_inputs`.
+
+`bp_log_summary`: inputs `readings` (1 to 120 of `{date, time, systolic 50-300, diastolic 30-200, pulse 20-250 or omitted, position sitting|standing|lying}`, systolic above diastolic) and optional `window_end` (ISO date, default the latest reading date). Result: `alerts[{level, text}]` (computed first; a reading above 180 or 120 gives `level: "emergency"` with the AHA wording), `window {start, end}`, `averages {morning, evening, all}` (each `{systolic, diastolic, count}` or `null`; seated readings only, 7 days ending at `window_end`), `reading_count`, `days_covered`, `excluded_non_seated`, `outside_window`, `coverage` (`complete`, `partial`), `coverage_note`, `band {label, note}`, `bands[{label, sbp_low, sbp_high, dbp_low, dbp_high}]`, `orthostatic_drops[{date, time, sbp_drop, dbp_drop}]`, `orthostatic_note`, `series[{date, time, systolic, diastolic, pulse, position, session}]`, `summary`. With no seated reading in the window the result is an `error` (plus `alerts` if any reading is above 180/120). A validation `error` also keeps `alerts` computed from the readings that validate on their own, so an invalid companion row never hides the emergency line. `time` values are local clock times; a timezone suffix is rejected.
+
+`glucose_log_pattern`: inputs `readings` (1 to 200 of `{date, time, value, units mg/dL|mmol/L, tag fasting|before_meal|after_meal|bedtime|other}`) and optional `a1c_percent` (4 to 12). Result: `alerts[{level, text}]` (below 54 mg/dL `emergency`; 54 to 69 and above 250 `call_today`), `grid[{slot, count, mean, min, max, in_target_fraction}]` in mg/dL (`null` when a slot is empty or has no target), `target_bands[{slot, low_mg_dl, high_mg_dl, low_mmol_l, high_mmol_l}]`, `target_note`, `points[{date, time, value_mg_dl, value_mmol_l, tag}]`, `pattern_note`, `reading_count`, `summary`, and with an A1c `adag {eag_mg_dl, eag_mmol_l, line[{a1c, eag}], mean_of_readings_mg_dl, note}`. As for the blood-pressure log, a validation `error` keeps the hypoglycaemia `alerts` from the readings that validate on their own, and `time` must be a local clock time.
+
+`medication_schedule`: input `medicines` (1 to 12 of `{name, strength or "", directions, directions_text or ""}`; `directions` is one of `once_daily_morning`, `once_daily_evening`, `once_daily_bedtime`, `twice_daily`, `three_times_daily`, `four_times_daily`, `every_morning_and_bedtime`, `with_meals`, `weekly`, `as_needed`, `other`, and `other` needs `directions_text`). Result: `status` (`available`, `partial`, `unavailable`, how many RxNorm lookups worked), `grid[{name, strength, ingredients[], slots {morning, noon, evening, bedtime}, wording, placed, normalisation {status matched|unmatched|unavailable, matched_name, rxcui, ingredients[{name, rxcui}]}}]`, `ums_note`, `duplicates[{ingredient, medicines[]}]`, `duplicates_note`, `limitations[]`, `summary`. Twice daily is placed in the morning and the evening, as in the AHRQ Universal Medication Schedule. Duplicates are grouped by RxNorm ingredient code and, as a fallback, by a case-insensitive match of the typed name; this is not an interaction check. The handoff treats a result as a reference lookup only when it has both `status` and `items`; every form tool and checklist (including `steadi_fall_risk`, whose `items` are the answered questions) is listed as a calculation.
+
+### Frontend notes
+
+- Every result carries `key`, `tool`, `source`, `scope`, and `inputs` (the validated inputs on success), so the browser can show the source and scope next to any number.
+- When a chat answer includes a calculator result whose `key` is in the browser catalogue (`static/js/tools-catalog.js`), the answer shows an "open the tool" launch button. It opens that tool with the result's `inputs`. If the result has an `error` or `missing_inputs` and no `hard_stop`, the button reads "Open the tool to complete it". Results for keys outside the catalogue show no button.
+- Deep links: `#tools` opens the catalogue and `#tool=<key>` opens one tool. An unknown key is ignored.
+- Education guides can carry a "Try the tool" button (`tool: { key, label }` in `static/js/education-guides.js`): blood pressure opens `bp_log_summary` and asthma opens `peak_flow_zone`.

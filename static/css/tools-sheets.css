@@ -1,0 +1,64 @@
+/* tools: sheets (medication_schedule, steadi_fall_risk, when_to_call). Tokens only; literal colours appear in the print block. */
+.tool-result .med-grid-wrap { overflow-x: auto; margin: 0 0 12px; }
+.tool-result .med-grid { width: 100%; border-collapse: collapse; font-size: 13px; }
+.tool-result .med-grid th, .tool-result .med-grid td { border: 1px solid var(--line); padding: 8px; vertical-align: middle; text-align: left; font-weight: 400; }
+.tool-result .med-grid thead th { font-weight: 550; color: var(--muted); }
+.med-head { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.med-name strong { display: block; font-weight: 550; }
+.med-name small { display: block; color: var(--muted); margin-top: 4px; line-height: 1.5; }
+.tool-result .med-grid td.med-slot { text-align: center; }
+.med-slot.on { background: color-mix(in srgb, var(--text) 10%, var(--raised)); }
+.med-slot svg { width: 24px; height: 24px; }
+.med-slot-name { display: none; }
+.med-purpose { color: var(--muted); font-size: 12px; }
+.med-dup strong { display: block; }
+.steadi-items { list-style: none; padding: 0; margin: 0 0 14px; }
+.steadi-items li { padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; margin: 0 0 8px; }
+.steadi-items li.key { border: 2px solid var(--text); }
+.steadi-items small { color: var(--muted); }
+.steadi-items em { display: block; font-style: normal; font-weight: 550; margin-top: 4px; }
+.tool-field[data-field='steadi_items'] .tool-yesno { margin: 0 0 10px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.call-sheet { display: grid; gap: 12px; margin: 0 0 14px; overflow-wrap: anywhere; }
+.call-sheet p, .call-sheet h3, .call-sheet h4 { margin: 0; }
+.call-tier { border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; }
+.call-tier.tier-emergency { border: 2px solid var(--danger); }
+.call-tier.tier-today { border: 2px solid var(--text); }
+.call-tier h3 { font-size: 16px; font-weight: 600; margin-bottom: 8px; }
+.call-tier h4 { font-size: 13px; font-weight: 550; color: var(--muted); margin: 12px 0 4px; }
+.call-phone { font-size: 1.15em; font-weight: 700; }
+.call-tier ul, .call-sources ol { margin: 0 0 8px; padding-left: 20px; }
+.call-tier p + p, .call-tier ul + p { margin-top: 8px; }
+.call-blank { border: 2px dashed var(--muted); border-radius: 12px; padding: 12px 14px; color: var(--muted); }
+.call-sources { font-size: 12px; }
+.call-sources h3 { font-size: 13px; margin-bottom: 4px; }
+@media (max-width: 600px) {
+  .tool-result .med-grid, .tool-result .med-grid tbody { display: block; }
+  .tool-result .med-grid thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .tool-result .med-grid tr { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid var(--line); border-radius: 14px; margin: 0 0 12px; overflow: hidden; }
+  .tool-result .med-grid th, .tool-result .med-grid td { border: 0; }
+  .tool-result .med-grid td.med-slot { display: grid; justify-items: center; gap: 2px; padding: 8px 2px; border-top: 1px solid var(--line); }
+  .tool-result .med-grid td.med-slot + td.med-slot { border-left: 1px solid var(--line); }
+  .tool-result .med-grid th.med-name, .tool-result .med-grid td.med-purpose { grid-column: 1 / -1; }
+  .tool-result .med-grid td.med-purpose { border-top: 1px solid var(--line); }
+  .med-slot-name { display: block; font-size: 12px; color: var(--muted); }
+}
+@media print {
+  #print-sheet h1 { font-size: 20pt; margin: 0 0 2mm; }
+  #print-sheet h2 { font-size: 13pt; margin: 0 0 2mm; }
+  #print-sheet .call-sheet { display: block; }
+  #print-sheet .call-tier h3 { font-size: 16pt; margin: 0 0 3mm; }
+  #print-sheet .call-tier h4 { font-size: 11pt; color: #000; margin: 3mm 0 1mm; }
+  #print-sheet .call-tier.tier-emergency, #print-sheet .call-tier.tier-today { border-width: 2px; border-color: #000; }
+  #print-sheet .call-phone { font-size: 18pt; font-weight: 700; }
+  #print-sheet .call-blank { border: 1px dashed #000; border-radius: 0; color: #000; padding: 3mm; margin: 0 0 2mm; }
+  #print-sheet .call-lead, #print-sheet .call-sources, #print-sheet .print-cannot, #print-sheet .print-source { font-size: 9pt; margin: 0 0 4mm; }
+  #print-sheet .call-url { overflow-wrap: anywhere; }
+  #print-sheet .med-grid { font-size: 11pt; }
+  #print-sheet .med-grid th, #print-sheet .med-grid td { padding: 2.5mm; }
+  #print-sheet .med-grid svg { width: 7mm; height: 7mm; stroke: #000; }
+  #print-sheet .med-slot-name { display: none; }
+  #print-sheet .med-grid td.med-slot { text-align: center; }
+  #print-sheet .med-grid td.med-slot svg { margin: 0 auto; display: block; }
+  #print-sheet .med-dup { border: 2px solid #000; border-radius: 0; padding: 3mm; margin: 0 0 4mm; break-inside: avoid; }
+  #print-sheet .med-notes { border: 1px solid #000; padding: 3mm; margin: 4mm 0; break-inside: avoid; }
+}

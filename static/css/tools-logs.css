@@ -1,0 +1,10 @@
+/* tools: logs (patient tools). Owned by the logs group; the shell, form, result and chart styles live in app.css. */
+.logs-subhead { font-size: 14px; font-weight: 550; margin: 14px 0 6px; }
+.logs-chart + .logs-chart { margin-top: 6px; }
+.logs-drops { margin: 0 0 14px; padding: 4px 14px 8px; border: 1px solid var(--line); border-radius: 12px; }
+.logs-drops .logs-subhead { margin-top: 10px; }
+.logs-drops ul { margin: 0 0 8px; padding-left: 20px; }
+.logs-drops li { margin: 0 0 4px; }
+.logs-drops p { margin: 0 0 6px; color: var(--muted); }
+.tool-dialog .tool-entries { table-layout: auto; }
+.tool-dialog .tool-entries td { overflow-wrap: anywhere; }

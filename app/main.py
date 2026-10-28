@@ -73,7 +73,7 @@ def create_app() -> FastAPI:
     app.add_middleware(GZipMiddleware, minimum_size=1024)
     app.add_middleware(
         RateLimitMiddleware,
-        max_requests=settings.rate_limit_requests,
+        limits=[("/api/chat", settings.rate_limit_requests), ("/api/tools", settings.tool_rate_limit_requests)],
         window_seconds=settings.rate_limit_window_seconds,
     )
     app.add_middleware(

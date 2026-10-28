@@ -74,6 +74,7 @@ export function openEducation(id, trigger) {
     ${guide.motion ? '<button type="button" class="motion-control" aria-pressed="false">Play fluid movement</button>' : ''}
     <div class="education-copy" aria-live="polite"></div>
     <details class="treatment-note"><summary>${escapeHtml(guide.note.title)}</summary><p>${escapeHtml(guide.note.text)}</p>${sourceLink(guide.note)}</details>
+    ${guide.tool ? `<button type="button" class="visual-launch tool-launch" data-action="open-tool" data-tool="${escapeAttr(guide.tool.key)}">${svg(ICON.layoutGrid)}<span><strong>${escapeHtml(guide.tool.label)}</strong></span>${svg(ICON.arrowRight)}</button>` : ''}
     ${guide.caution ? `<p class="education-caution">${escapeHtml(guide.caution.text)} ${sourceLink(guide.caution)}</p>` : ''}
     <p class="source-note">${escapeHtml(guide.footer || 'Original educational illustration informed by the linked NIH sources. It explains a mechanism; it cannot identify the cause of symptoms or select a treatment.')}</p></div>`;
   select(0);

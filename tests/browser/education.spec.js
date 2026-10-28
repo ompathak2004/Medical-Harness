@@ -52,6 +52,7 @@ for (const theme of ['light', 'dark']) {
           }))).toBe(true);
         }
         await dialog.locator('.education-steps').scrollIntoViewIfNeeded();
+        if (guide.tool) await dialog.locator('[data-action="open-tool"]').evaluate(el => el.scrollIntoView({ block: 'center' }));
         if ((size === 'desktop' && theme === 'light') || (size === 'mobile' && theme === 'dark')) {
           await page.screenshot({ path: `docs/media/guide-${id}-${size}-${theme}.png` });
         }
@@ -228,3 +229,66 @@ for (const theme of ['light', 'dark']) {
     });
   }
 }
+
+test.describe('Try the tool links', () => {
+  const linked = [['blood_pressure', 'bp_log_summary', 'Home blood pressure log'], ['asthma', 'peak_flow_zone', 'Peak-flow zone']];
+
+  for (const [guide, tool, heading] of linked) {
+    test(`${guide} guide links to the ${tool} tool`, async ({ page }) => {
+      await page.goto('/');
+      await answerWith(page, guide);
+      await page.getByRole('button', { name: EDUCATION[guide].launch, exact: false }).click();
+      const dialog = page.getByRole('dialog', { name: EDUCATION[guide].title, exact: true });
+      const link = dialog.locator('[data-action="open-tool"]');
+      await expect(link).toHaveCount(1);
+      await expect(link).toHaveAttribute('data-tool', tool);
+      await expect(link).toHaveClass(/tool-launch/);
+      await expect(link).toContainText(GUIDES[guide].tool.label);
+      await link.click();
+      const toolDialog = page.locator('dialog.tool-dialog');
+      await expect(toolDialog).toBeVisible();
+      await expect(toolDialog.getByRole('heading', { name: heading, level: 2 })).toBeVisible();
+    });
+  }
+
+  test('the link opens with the keyboard', async ({ page }) => {
+    await page.goto('/');
+    await answerWith(page, 'asthma');
+    await page.getByRole('button', { name: EDUCATION.asthma.launch, exact: false }).click();
+    const link = page.getByRole('dialog', { name: EDUCATION.asthma.title, exact: true }).locator('[data-action="open-tool"]');
+    await link.focus();
+    await expect(link).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('dialog.tool-dialog').getByRole('heading', { name: 'Peak-flow zone', level: 2 })).toBeVisible();
+  });
+
+  test('the link fits narrow dark screens', async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 740 });
+    await page.addInitScript(() => localStorage.setItem('medical-harness-theme', 'dark'));
+    await page.goto('/');
+    await answerWith(page, 'blood_pressure');
+    await page.getByRole('button', { name: EDUCATION.blood_pressure.launch, exact: false }).click();
+    const dialog = page.getByRole('dialog', { name: EDUCATION.blood_pressure.title, exact: true });
+    const link = dialog.locator('[data-action="open-tool"]');
+    await link.scrollIntoViewIfNeeded();
+    const box = await link.boundingBox();
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(320);
+    expect(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+  });
+
+  test('guides without a tool show no link', async ({ page }) => {
+    const plain = Object.entries(GUIDES).filter(([, guide]) => !guide.tool).map(([id]) => id);
+    expect(plain.length).toBeGreaterThan(0);
+    expect(Object.keys(GUIDES).filter(id => GUIDES[id].tool).sort()).toEqual(['asthma', 'blood_pressure']);
+    await page.goto('/');
+    for (const id of plain) {
+      await answerWith(page, id);
+      await page.getByRole('button', { name: EDUCATION[id].launch, exact: false }).last().click();
+      const dialog = page.getByRole('dialog', { name: EDUCATION[id].title, exact: true });
+      await expect(dialog).toBeVisible();
+      await expect(dialog.locator('[data-action="open-tool"]')).toHaveCount(0);
+      await page.keyboard.press('Escape');
+    }
+  });
+});

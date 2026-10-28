@@ -21,3 +21,4 @@ test-results/
 playwright-report/
 evals/
 data/
+!app/tools/data/

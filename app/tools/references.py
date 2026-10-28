@@ -33,6 +33,13 @@ REFERENCE_TOOLS = {
         "source": "https://open.fda.gov/apis/drug/label/",
         "scope": "US label for the exact product named in the result. Not personalized, not an interaction check, not dosing advice. Confirm the product and formulation with a pharmacist.",
     },
+    "rxnorm_ingredients": {
+        "description": "Resolve one explicitly named medicine to its active ingredient(s) through RxNorm. Not an interaction check, not dosing, not a product confirmation.",
+        "variables": ["query"],
+        "name": "RxNorm ingredients",
+        "source": "https://rxnav.nlm.nih.gov/",
+        "scope": "US RxNorm vocabulary; confirm the exact product with a pharmacist",
+    },
 }
 
 OPENFDA_LABEL_URL = "https://api.fda.gov/drug/label.json"
@@ -42,6 +49,12 @@ OPENFDA_LABEL_MAX_BYTES = 2 * 1024 * 1024
 LABEL_RATE_LIMIT_ERROR = "The label service rate limit was reached. Try again in a minute."
 LABEL_COMBINATION_ERROR = "Only combination products matched this name. Label sections are not shown because a combination product is not the same medicine."
 LABEL_UNVERIFIED_ERROR = "No label could be confirmed as a single-ingredient product for this name. Label sections are not shown."
+RXNORM_BASE_URL = "https://rxnav.nlm.nih.gov/REST"
+RXNORM_PRODUCT_URL = "https://mor.nlm.nih.gov/RxNav/search?searchBy=RXCUI&searchTerm={rxcui}"
+RXNORM_RATE_LIMIT_ERROR = "The RxNorm service rate limit was reached. Try again in a minute."
+RXNORM_MAX_ITEMS = 10
+RXCUI_PATTERN = re.compile(r"[0-9]{1,8}")
+RXNORM_QUERY_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9 -]{0,59}")
 LABEL_SECTIONS = (
     ("boxed_warning", "Boxed warning"),
     ("indications_and_usage", "Indications and usage"),
@@ -50,6 +63,9 @@ LABEL_SECTIONS = (
     ("warnings", "Warnings"),
     ("adverse_reactions", "Adverse reactions"),
 )
+
+
+RATE_LIMIT_ERRORS = {"label_sections": LABEL_RATE_LIMIT_ERROR, "rxnorm_ingredients": RXNORM_RATE_LIMIT_ERROR}
 
 
 def clean_text(value, limit):
@@ -68,7 +84,7 @@ class ReferenceTools:
         info = REFERENCE_TOOLS[key]
         result = {"tool": info["name"], "source": info["source"], "scope": info["scope"], "items": []}
         query = variables.get("query")
-        if not isinstance(query, str) or not re.fullmatch(r"[A-Za-z][A-Za-z -]{1,79}", query):
+        if not isinstance(query, str) or not self._valid_query(key, query):
             return {**result, "status": "unavailable", "error": "A short medicine name or medical topic is required."}
         circuit = self.circuits[key]
         try:
@@ -81,6 +97,10 @@ class ReferenceTools:
                     label = await self._label_sections(query.strip())
                     items = label.pop("items")
                     result = {**result, **label}
+                elif key == "rxnorm_ingredients":
+                    rxnorm = await self._rxnorm_ingredients(query.strip())
+                    items = rxnorm.pop("items")
+                    result = {**result, **rxnorm}
                 elif key == "drug_labels":
                     payload = await self._get("https://dailymed.nlm.nih.gov/dailymed/services/v2/spls.json",
                         {"drug_name": query.strip(), "pagesize": 3, "page": 1})
@@ -97,9 +117,16 @@ class ReferenceTools:
             raise
         except Exception as exc:
             circuit.failure()
-            if key == "label_sections" and isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 429:
-                return {**result, "status": "unavailable", "error": LABEL_RATE_LIMIT_ERROR}
+            if key in RATE_LIMIT_ERRORS and isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 429:
+                return {**result, "status": "unavailable", "error": RATE_LIMIT_ERRORS[key]}
             return {**result, "status": "unavailable", "error": "Reference lookup could not be completed. No conclusion can be drawn from missing results."}
+
+    @staticmethod
+    def _valid_query(key, query):
+        if key == "rxnorm_ingredients":
+            # Medicine names only: letters, digits (strengths), spaces and hyphens, never a run that could be a date or number.
+            return bool(RXNORM_QUERY_PATTERN.fullmatch(query)) and not re.search(r"[0-9]{4}", query)
+        return bool(re.fullmatch(r"[A-Za-z][A-Za-z -]{1,79}", query))
 
     async def _get(self, url, params, not_found_ok=False, max_bytes=262144):
         async with self.client.stream("GET", url, params=params) as response:
@@ -152,6 +179,33 @@ class ReferenceTools:
                               "tldr": text, "source": "openFDA", "evidence_kind": "label_section"})
         return {"items": items, "product": product, "generic_name": generic, "effective_time": effective_time,
                 "set_id": set_id, "url": url, "has_interactions_section": bool(row.get("drug_interactions"))}
+
+    async def _rxnorm_ingredients(self, query):
+        """Exact-then-normalised RxNorm match (no approximate matching), then the related IN/MIN concepts."""
+        matched = await self._get(f"{RXNORM_BASE_URL}/rxcui.json", {"name": query, "search": 2})
+        group = matched.get("idGroup")
+        ids = group.get("rxnormId") if isinstance(group, dict) else None
+        rxcui = ids[0] if isinstance(ids, list) and ids else None
+        if not isinstance(rxcui, str) or not RXCUI_PATTERN.fullmatch(rxcui):
+            return {"items": [], "combination": False}
+        related = await self._get(f"{RXNORM_BASE_URL}/rxcui/{rxcui}/related.json", {"tty": "IN MIN"})
+        groups = (related.get("relatedGroup") or {}).get("conceptGroup")
+        found = {"IN": [], "MIN": []}
+        for entry in groups if isinstance(groups, list) else []:
+            concepts = entry.get("conceptProperties") if isinstance(entry, dict) else None
+            for concept in concepts if isinstance(concepts, list) else []:
+                if not isinstance(concept, dict) or concept.get("tty") not in found:
+                    continue
+                identifier, name = concept.get("rxcui"), clean_text(concept.get("name"), 120)
+                if isinstance(identifier, str) and RXCUI_PATTERN.fullmatch(identifier) and name \
+                        and all(item["rxcui"] != identifier for item in found[concept["tty"]]):
+                    found[concept["tty"]].append({"title": name, "url": RXNORM_PRODUCT_URL.format(rxcui=identifier),
+                                                    "rxcui": identifier, "tty": concept["tty"]})
+        # For a single ingredient, RxNorm's MIN list holds every combination that contains it, so a MIN
+        # entry alone does not make the named medicine a combination; two or more ingredients do.
+        combination = len(found["IN"]) > 1
+        items = (found["IN"] + (found["MIN"] if combination else []))[:RXNORM_MAX_ITEMS]
+        return {"items": items, "rxcui": rxcui, "combination": combination}
 
     @staticmethod
     def _first(value):
