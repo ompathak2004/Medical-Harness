@@ -15,7 +15,7 @@ TRACE_STEPS = ("triage", "tools", "evidence", "draft", "review")
 # Fixed vocabulary for TraceStep.detail. Never provider or user text.
 TRACE_DETAILS = frozenset({
     "", "invalid_json", "unavailable", "selected=1", "selected=2", "partial", "selection_failed",
-    "empty", "error", "reference_sources", "over_budget", "interrupted", "attempts=2", "revised_once",
+    "empty", "error", "reference_sources", "over_budget", "interrupted", "attempts=1", "attempts=2", "revised_once",
     "confirmation_required", "not_used",
 })
 

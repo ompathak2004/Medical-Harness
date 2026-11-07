@@ -23,6 +23,7 @@ from app.logging_conf import setup_logging
 from app.middleware import RequestSizeMiddleware
 from app.pipeline import AgentPipeline
 from app.rate_limit import RateLimitMiddleware
+from app.telemetry import RequestTelemetryMiddleware, Telemetry
 from app.tools.references import ReferenceTools
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,8 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        telemetry = Telemetry.configure(settings)
+        app.state.telemetry = telemetry
         llm = CerebrasClient(
             api_key=settings.cerebras_api_key,
             model=settings.cerebras_model,
@@ -53,6 +56,8 @@ def create_app() -> FastAPI:
             timeout_seconds=settings.llm_timeout_seconds,
             max_retries=settings.llm_max_retries,
             prompt_cache_key=settings.cerebras_prompt_cache_key,
+            input_usd_per_million=settings.cerebras_input_usd_per_million,
+            output_usd_per_million=settings.cerebras_output_usd_per_million,
         )
         evidence = EvidenceRetriever(api_key=settings.medisearch_api_key)
         references = ReferenceTools()
@@ -65,9 +70,10 @@ def create_app() -> FastAPI:
             yield
         finally:
             await pipeline.aclose()
-            await asyncio.gather(llm.aclose(), evidence.aclose(), references.aclose())
+            await asyncio.gather(llm.aclose(), evidence.aclose(), references.aclose(), telemetry.aclose())
 
     app = FastAPI(title="medical-harness", version=__version__, lifespan=lifespan)
+    app.state.telemetry = Telemetry()
 
     app.add_middleware(RequestSizeMiddleware, max_bytes=settings.max_request_bytes)
     app.add_middleware(GZipMiddleware, minimum_size=1024)
@@ -81,6 +87,7 @@ def create_app() -> FastAPI:
         allow_origins=settings.cors_origin_list,
         allow_methods=["GET", "POST"],
         allow_headers=["*"],
+        expose_headers=["X-Request-ID"],
     )
 
     @app.middleware("http")
@@ -107,12 +114,16 @@ def create_app() -> FastAPI:
                                 secure=request.url.scheme == "https", samesite="strict")
         return response
 
+    app.add_middleware(RequestTelemetryMiddleware)
+
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception):
         logger.error("unhandled error kind=%s", type(exc).__name__)
+        request_id = getattr(request.state, "request_id", None)
         return JSONResponse(
             status_code=500,
             content={"detail": "Internal server error. Please try again."},
+            headers={"X-Request-ID": request_id} if request_id else None,
         )
 
     app.include_router(router)
@@ -133,4 +144,4 @@ def run() -> None:
     import uvicorn
 
     settings = get_settings()
-    uvicorn.run("app.main:app", host="0.0.0.0", port=settings.port)
+    uvicorn.run("app.main:app", host="0.0.0.0", port=settings.port, access_log=False)

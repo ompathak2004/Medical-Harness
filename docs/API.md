@@ -4,7 +4,7 @@ The app serves its API and frontend from the same origin. Run it locally, then o
 
 ## Health
 
-`GET /api/health` returns a small status object and version. It does not call the external providers.
+`GET /api/health` returns `status`, `version`, and `revision`. The revision is the full deployed Git SHA when known, or `unknown`. This liveness endpoint does not call external providers. API responses include a server-generated `X-Request-ID` header for correlating support requests with operator logs and sampled traces.
 
 ```bash
 curl http://localhost:8080/api/health

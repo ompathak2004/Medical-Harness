@@ -7,6 +7,7 @@ import inspect
 from contextvars import ContextVar
 from collections import Counter
 from collections.abc import AsyncIterator
+from contextlib import aclosing
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, StringConstraints, model_validator
@@ -33,6 +34,7 @@ from app.prompts import (
     VARIABLE_EXTRACTION_USER,
     WHEN_TO_CALL_SYSTEM,
 )
+from app.telemetry import operation
 from app.tools.anatomy import select_anatomy
 from app.tools.education import select_visual
 from app.tools.clinical import TOOL_REGISTRY
@@ -96,10 +98,11 @@ class _RunTrace:
     async def timed(self, name: str, awaitable):
         """Await `awaitable` with the step clock running, whatever the outcome."""
         self.start(name)
-        try:
-            return await awaitable
-        finally:
-            self.stop(name)
+        with operation(f"pipeline.{name}"):
+            try:
+                return await awaitable
+            finally:
+                self.stop(name)
 
     def finish(self, name: str, status: str, detail: str = "") -> None:
         if detail not in TRACE_DETAILS:
@@ -213,7 +216,9 @@ class AgentPipeline:
             trace.start("triage")
             triage_info: dict = {}
             try:
-                triage = await self._triage(conv_text, triage_info)
+                with operation("pipeline.triage") as span:
+                    triage = await self._triage(conv_text, triage_info)
+                    span.set_attribute("medical_harness.outcome", triage["action"])
             except TriageUnavailable:
                 trace.finish("triage", "failed", triage_info.get("detail", "unavailable"))
                 raise
@@ -349,13 +354,15 @@ class AgentPipeline:
             answer_chars = 0
             over_budget = False
             try:
-                async for chunk in self.llm.generate_stream(answer_user, system=WHEN_TO_CALL_SYSTEM if sheet_mode else ANSWER_SYSTEM):
-                    answer_parts.append(chunk)
-                    answer_chars += len(chunk)
-                    if answer_chars > self.max_answer_chars:
-                        over_budget = True
-                        raise ReviewUnavailable("Answer exceeded its budget")
-
+                system = WHEN_TO_CALL_SYSTEM if sheet_mode else ANSWER_SYSTEM
+                with operation("pipeline.draft"):
+                    async with aclosing(self.llm.generate_stream(answer_user, system=system)) as stream:
+                        async for chunk in stream:
+                            answer_parts.append(chunk)
+                            answer_chars += len(chunk)
+                            if answer_chars > self.max_answer_chars:
+                                over_budget = True
+                                raise ReviewUnavailable("Answer exceeded its budget")
             except Exception as exc:
                 trace.finish("draft", "failed", "over_budget" if over_budget else "interrupted")
                 raise ReviewUnavailable("Answer generation was interrupted. Please try again.") from exc
@@ -370,10 +377,12 @@ class AgentPipeline:
             trace.start("review")
             review_info: dict = {}
             try:
-                answer = await self._safety_check(question, answer, evidence_result, tool_results, review_info)
-                self._validate_answer(answer, len(articles))
+                with operation("pipeline.review") as span:
+                    answer = await self._safety_check(question, answer, evidence_result, tool_results, review_info)
+                    self._validate_answer(answer, len(articles))
+                    span.set_attribute("medical_harness.revised", bool(review_info.get("revised")))
             except ReviewUnavailable:
-                trace.finish("review", "failed", "attempts=2")
+                trace.finish("review", "failed", f"attempts={review_info['attempts']}")
                 raise
             if review_info.get("revised"):
                 trace.finish("review", "fallback", "revised_once")
@@ -521,7 +530,8 @@ class AgentPipeline:
             return selection
 
         try:
-            selection = await self._cached_step("tool_selection", conv_text, compute)
+            with operation("tool.plan"):
+                selection = await self._cached_step("tool_selection", conv_text, compute)
         except Exception:
             logger.warning("pipeline.tool_selection failed")
             info["failed"] = True
@@ -557,13 +567,18 @@ class AgentPipeline:
             if incomplete and tool_key in REFERENCE_TOOLS:
                 return None
             try:
-                if tool_key in REFERENCE_TOOLS:
-                    if self.references is None:
-                        return None
-                    key = text_key(self.policy_version, cache_scope.get(), tool_key, conv_text)
-                    return await self.step_cache.get_or_compute(key,
-                        lambda: self.references.run(tool_key, variables), cache_if=lambda value: value.get("status") == "available")
-                return TOOL_REGISTRY[tool_key]["function"](variables)
+                with operation("tool.execute", {"tool.name": tool_key}) as span:
+                    if tool_key in REFERENCE_TOOLS:
+                        if self.references is None:
+                            return None
+                        key = text_key(self.policy_version, cache_scope.get(), tool_key, conv_text)
+                        result = await self.step_cache.get_or_compute(key,
+                            lambda: self.references.run(tool_key, variables), cache_if=lambda value: value.get("status") == "available")
+                    else:
+                        result = TOOL_REGISTRY[tool_key]["function"](variables)
+                    outcome = "error" if result.get("error") else "ok"
+                    span.set_attribute("medical_harness.outcome", outcome)
+                    return result
             except Exception:
                 logger.warning("pipeline.tool_execution failed tool=%s", tool_key)
                 return None
@@ -579,12 +594,13 @@ class AgentPipeline:
             tool_name=tool_name, variables=", ".join(variables)
         )
         try:
-            raw = await self.llm.generate(
-                VARIABLE_EXTRACTION_USER.format(conversation=conv_text), system=system,
-                max_tokens=600, json_mode=True
-            )
-            parsed = parse_json_response(raw)
-            return {k: v for k, v in parsed.items() if v is not None}
+            with operation("tool.extract", {"tool.name": tool_name}):
+                raw = await self.llm.generate(
+                    VARIABLE_EXTRACTION_USER.format(conversation=conv_text), system=system,
+                    max_tokens=600, json_mode=True
+                )
+                parsed = parse_json_response(raw)
+                return {name: parsed[name] for name in variables if parsed.get(name) is not None}
         except Exception:
             logger.warning("pipeline.variable_extraction failed tool=%s", tool_name)
             return None
@@ -635,10 +651,14 @@ class AgentPipeline:
             citations_text += "\nTool outputs (label directory entries do not contain label contents):\n" + json.dumps(tool_results, ensure_ascii=False)
         candidate = answer
         for attempt in range(2):
+            if info is not None:
+                info["attempts"] = attempt + 1
             user = SAFETY_USER.format(question=question, answer=candidate, citations=citations_text)
             try:
-                raw = await self.llm.generate(user, system=SAFETY_SYSTEM, max_tokens=4096, json_mode=True)
-                verdict = _SafetyVerdict.model_validate(parse_json_response(raw))
+                with operation("review.verdict", {"medical_harness.attempt": attempt + 1}) as span:
+                    raw = await self.llm.generate(user, system=SAFETY_SYSTEM, max_tokens=4096, json_mode=True)
+                    verdict = _SafetyVerdict.model_validate(parse_json_response(raw))
+                    span.set_attribute("medical_harness.approved", verdict.is_safe)
                 if verdict.is_safe:
                     return candidate
                 if attempt == 0 and verdict.revised_answer.strip():

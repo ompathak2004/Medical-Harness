@@ -7,6 +7,8 @@ import time
 from collections import OrderedDict
 from typing import Any
 
+from opentelemetry.trace import get_current_span
+
 
 def text_key(*parts: str) -> str:
     return hashlib.sha256(json.dumps(parts, ensure_ascii=False).encode()).hexdigest()
@@ -26,9 +28,12 @@ class TTLCache:
 
     async def get_or_compute(self, key, compute, cache_if=lambda value: True):
         cached = self.get(key)
+        span = get_current_span()
+        span.set_attribute("cache.hit", cached is not None)
         if cached is not None:
             return cached
         task = self._pending.get(key)
+        span.set_attribute("cache.coalesced", task is not None)
         if task is None:
             async def fill():
                 value = await compute()

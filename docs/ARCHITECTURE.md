@@ -20,6 +20,8 @@ HTTP clients are pooled and closed on shutdown. Provider calls have bounded retr
 
 Cache values contain sensitive derived data in memory; expired entries are removed during cache operations. No prompts, patient text or keys belong in logs. Protected metrics expose numeric counters only. Caches, concurrency and quotas are per instance; global limits require platform infrastructure.
 
+The API generates a request ID and emits a structured completion line for each request, including the result of streamed requests. Optional [OpenTelemetry export](OBSERVABILITY.md) records stages and provider attempts in the same trace. The exporter batches allowlisted metadata and runs separately from inference.
+
 ## Visitor analytics
 
 Production on Vercel adds a separate bundled analytics bootstrap using `@vercel/analytics`. It loads Vercel's same-origin collection script and records anonymous page views. The filter strips query strings and fragments and rejects custom events; it never receives chat text or clinical tool results. Local and preview HTML omit the bootstrap. Country, browser, and device breakdowns are available in the project's Vercel dashboard. See [deployment](DEPLOYMENT.md).

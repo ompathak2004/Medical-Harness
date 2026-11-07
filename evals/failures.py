@@ -356,7 +356,7 @@ FAULT_CASES: list[dict] = [
           "Fails closed with urgency `unknown`; no retrieval, tools, or answer after a failed emergency screen."),
     _case("review_timeout", "The safety review call times out.", build_review_timeout,
           "error:ReviewUnavailable", "review_unavailable", "routine",
-          {**ANSWER_STEPS, "tools": "skipped", "review": "failed:attempts=2"},
+          {**ANSWER_STEPS, "tools": "skipped", "review": "failed:attempts=1"},
           "The drafted answer is discarded; no `answer_chunk` or `result` event is sent."),
     _case("review_unsafe_twice", "The reviewer marks the draft unsafe, then marks its revision unsafe.", build_review_unsafe_twice,
           "error:ReviewUnavailable", "review_unavailable", "routine",

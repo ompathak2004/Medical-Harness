@@ -9,6 +9,7 @@ import httpx
 
 from app.transport import CircuitBreaker, CircuitOpen
 from app.streaming import bounded_lines
+from app.telemetry import provider_attempt
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,8 @@ class EvidenceRetriever:
         try:
             self.circuit.acquire()
         except CircuitOpen:
+            with provider_attempt("medisearch", 0) as span:
+                span.set_attribute("medical_harness.outcome", "circuit_open")
             return empty
         payload = {"conversation": conversation, "id": conversation_id, "key": self.api_key,
                    "settings": {"language": "English", "model_type": "standard", "followup_count": 3}}
@@ -66,24 +69,27 @@ class EvidenceRetriever:
             for attempt in range(2):
                 result = {"response": "", "articles": [], "followups": []}
                 try:
-                    async with self.client.stream("POST", "https://api.backend.medisearch.io/sse/medichat", json=payload) as response:
-                        response.raise_for_status()
-                        async for line in bounded_lines(response):
-                            if not line.startswith("data:"):
-                                continue
-                            data = line[5:].strip()
-                            if data == "[DONE]":
-                                break
-                            event = json.loads(data)
-                            if not isinstance(event, dict) or event.get("event") == "error":
-                                raise ValueError("Evidence response invalid")
-                            value = event.get("data")
-                            if event.get("event") == "llm_response" and isinstance(value, str):
-                                result["response"] = (result["response"] + value)[:4000]
-                            elif event.get("event") == "articles":
-                                result["articles"] = normalize_articles(value)
-                            elif event.get("event") == "followups" and isinstance(value, list):
-                                result["followups"] = [q[:300] for q in value if isinstance(q, str) and q.strip()][:3]
+                    with provider_attempt("medisearch", attempt + 1) as span:
+                        async with self.client.stream("POST", "https://api.backend.medisearch.io/sse/medichat", json=payload) as response:
+                            span.set_attribute("http.response.status_code", response.status_code)
+                            response.raise_for_status()
+                            async for line in bounded_lines(response):
+                                if not line.startswith("data:"):
+                                    continue
+                                data = line[5:].strip()
+                                if data == "[DONE]":
+                                    break
+                                event = json.loads(data)
+                                if not isinstance(event, dict) or event.get("event") == "error":
+                                    raise ValueError("Evidence response invalid")
+                                value = event.get("data")
+                                if event.get("event") == "llm_response" and isinstance(value, str):
+                                    result["response"] = (result["response"] + value)[:4000]
+                                elif event.get("event") == "articles":
+                                    result["articles"] = normalize_articles(value)
+                                elif event.get("event") == "followups" and isinstance(value, list):
+                                    result["followups"] = [q[:300] for q in value if isinstance(q, str) and q.strip()][:3]
+                        span.set_attribute("medical_harness.source_count", len(result["articles"]))
                     self.circuit.success()
                     return result
                 except (httpx.HTTPError, ValueError, TypeError) as exc:

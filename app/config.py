@@ -1,11 +1,11 @@
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import AnyHttpUrl, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore", hide_input_in_errors=True)
 
     cerebras_api_key: str = Field(min_length=1, repr=False)
     cerebras_model: str = "gpt-oss-120b"
@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = Field(default=45, gt=0, le=120)
     llm_max_retries: int = Field(default=2, ge=1, le=4)
     cerebras_prompt_cache_key: str = ""
+    cerebras_input_usd_per_million: float | None = Field(default=None, ge=0, le=100000)
+    cerebras_output_usd_per_million: float | None = Field(default=None, ge=0, le=100000)
     medisearch_api_key: str = Field(min_length=1, repr=False)
     openfda_api_key: str = Field(default="", repr=False)
     max_evidence_articles: int = Field(default=8, ge=1, le=16)
@@ -31,6 +33,10 @@ class Settings(BaseSettings):
     request_timeout_seconds: float = Field(default=150, gt=0, le=170)
     max_concurrent_requests: int = Field(default=8, ge=1, le=64)
     metrics_token: str = Field(default="", repr=False)
+    otel_exporter_otlp_endpoint: AnyHttpUrl | None = None
+    otel_exporter_otlp_headers: SecretStr = SecretStr("")
+    otel_traces_sampler_arg: float = Field(default=0.1, ge=0, le=1)
+    app_release_sha: str = Field(default="", pattern=r"^(?:[0-9a-f]{40})?$")
     max_conversation_messages: int = Field(default=39, ge=1, le=99)
     max_message_chars: int = Field(default=8000, ge=1, le=16000)
     max_conversation_chars: int = Field(default=32000, ge=1000, le=128000)
@@ -38,6 +44,22 @@ class Settings(BaseSettings):
     rate_limit_requests: int = Field(default=20, ge=1, le=1000)
     rate_limit_window_seconds: int = Field(default=60, ge=1, le=3600)
     tool_rate_limit_requests: int = Field(default=60, ge=1, le=1000)
+
+    @field_validator("otel_exporter_otlp_endpoint", "cerebras_input_usd_per_million", "cerebras_output_usd_per_million", mode="before")
+    @classmethod
+    def blank_optional(cls, value):
+        return None if value == "" else value
+
+    @field_validator("otel_exporter_otlp_endpoint")
+    @classmethod
+    def secure_endpoint(cls, value):
+        if value is None:
+            return value
+        if value.username or value.password or value.query or value.fragment:
+            raise ValueError("Put OTLP credentials in headers and supply a base endpoint")
+        if value.scheme != "https" and value.host not in {"localhost", "127.0.0.1", "[::1]"}:
+            raise ValueError("A remote OTLP endpoint must use HTTPS")
+        return value
 
     @property
     def cors_origin_list(self) -> list[str]:

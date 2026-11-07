@@ -8,8 +8,9 @@ from collections.abc import AsyncIterator
 
 import httpx
 
-from app.transport import CircuitBreaker
 from app.streaming import bounded_json, bounded_lines
+from app.telemetry import provider_attempt
+from app.transport import CircuitBreaker, CircuitOpen
 
 logger = logging.getLogger(__name__)
 _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
@@ -38,12 +39,14 @@ class LLMError(RuntimeError):
 class CerebrasClient:
     def __init__(self, api_key: str, model="gpt-oss-120b", base_url="https://api.cerebras.ai/v1",
                  temperature=0.3, max_tokens=4096, timeout_seconds=45, max_retries=2,
-                 prompt_cache_key=""):
+                 prompt_cache_key="", input_usd_per_million=None, output_usd_per_million=None):
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.max_retries = max_retries
         self.prompt_cache_key = prompt_cache_key
+        self.input_usd_per_million = input_usd_per_million
+        self.output_usd_per_million = output_usd_per_million
         self.total_requests = 0
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
@@ -66,11 +69,28 @@ class CerebrasClient:
             "circuit_open": self.circuit.opened_at is not None,
         }
 
-    def _record_usage(self, usage):
-        if isinstance(usage, dict):
-            self.total_prompt_tokens += usage.get("prompt_tokens") or 0
-            self.total_completion_tokens += usage.get("completion_tokens") or 0
-            self.total_cached_tokens += (usage.get("prompt_tokens_details") or {}).get("cached_tokens") or 0
+    def _record_usage(self, usage, span):
+        if not isinstance(usage, dict):
+            return
+        prompt = _token_count(usage.get("prompt_tokens"))
+        completion = _token_count(usage.get("completion_tokens"))
+        details = usage.get("prompt_tokens_details")
+        cached = _token_count(details.get("cached_tokens")) if isinstance(details, dict) else 0
+        self.total_prompt_tokens += prompt
+        self.total_completion_tokens += completion
+        self.total_cached_tokens += min(cached, prompt)
+        span.set_attributes({"gen_ai.usage.input_tokens": prompt, "gen_ai.usage.output_tokens": completion})
+        if self.input_usd_per_million is not None and self.output_usd_per_million is not None:
+            cost = (prompt * self.input_usd_per_million + completion * self.output_usd_per_million) / 1_000_000
+            span.set_attribute("medical_harness.estimated_cost_usd", cost)
+
+    def _acquire(self):
+        try:
+            self.circuit.acquire()
+        except CircuitOpen:
+            with provider_attempt("cerebras", 0, self.model) as span:
+                span.set_attribute("medical_harness.outcome", "circuit_open")
+            raise
 
     def _payload(self, user, system, *, stream=False, max_tokens=None, json_mode=False):
         messages = ([{"role": "system", "content": system}] if system else [])
@@ -88,23 +108,25 @@ class CerebrasClient:
         return payload
 
     async def generate(self, user, system=None, *, max_tokens=None, json_mode=False):
-        self.circuit.acquire()
+        self._acquire()
         try:
             for attempt in range(self.max_retries):
                 try:
-                    self.total_requests += 1
-                    async with self._client.stream("POST", "/chat/completions", json=self._payload(
-                        user, system, max_tokens=max_tokens, json_mode=json_mode,
-                    )) as response:
-                        response.raise_for_status()
-                        data = await bounded_json(response)
-                    choice = data["choices"][0]
-                    if choice.get("finish_reason") != "stop":
-                        raise LLMError("Incomplete completion")
-                    value = choice["message"]["content"]
-                    if not isinstance(value, str) or not value.strip() or len(value) > 64000:
-                        raise LLMError("Invalid completion")
-                    self._record_usage(data.get("usage"))
+                    with provider_attempt("cerebras", attempt + 1, self.model) as span:
+                        self.total_requests += 1
+                        async with self._client.stream("POST", "/chat/completions", json=self._payload(
+                            user, system, max_tokens=max_tokens, json_mode=json_mode,
+                        )) as response:
+                            span.set_attribute("http.response.status_code", response.status_code)
+                            response.raise_for_status()
+                            data = await bounded_json(response)
+                        self._record_usage(data.get("usage"), span)
+                        choice = data["choices"][0]
+                        if choice.get("finish_reason") != "stop":
+                            raise LLMError("Incomplete completion")
+                        value = choice["message"]["content"]
+                        if not isinstance(value, str) or not value.strip() or len(value) > 64000:
+                            raise LLMError("Invalid completion")
                     self.circuit.success()
                     return value
                 except httpx.HTTPError as exc:
@@ -120,43 +142,45 @@ class CerebrasClient:
             raise LLMError("Provider response unavailable") from None
 
     async def generate_stream(self, user, system=None) -> AsyncIterator[str]:
-        self.circuit.acquire()
+        self._acquire()
         try:
             for attempt in range(self.max_retries):
                 emitted = False
                 finished = False
                 chars = 0
                 try:
-                    self.total_requests += 1
-                    async with self._client.stream("POST", "/chat/completions", json=self._payload(user, system, stream=True)) as response:
-                        response.raise_for_status()
-                        async for line in bounded_lines(response, max_bytes=2097152):
-                            if not line.startswith("data:"):
-                                continue
-                            payload = line[5:].strip()
-                            if payload == "[DONE]":
-                                break
-                            chunk = json.loads(payload)
-                            if "error" in chunk:
-                                raise LLMError("Provider stream unavailable")
-                            self._record_usage(chunk.get("usage"))
-                            for choice in chunk.get("choices", []):
-                                reason = choice.get("finish_reason")
-                                if reason is not None:
-                                    if reason != "stop":
-                                        raise LLMError("Incomplete completion")
-                                    finished = True
-                                delta = choice.get("delta", {}).get("content")
-                                if delta:
-                                    if not isinstance(delta, str):
-                                        raise LLMError("Invalid stream content")
-                                    chars += len(delta)
-                                    if chars > 64000:
-                                        raise LLMError("Completion too long")
-                                    emitted = True
-                                    yield delta
-                    if not finished or not emitted:
-                        raise LLMError("Stream ended before completion")
+                    with provider_attempt("cerebras", attempt + 1, self.model) as span:
+                        self.total_requests += 1
+                        async with self._client.stream("POST", "/chat/completions", json=self._payload(user, system, stream=True)) as response:
+                            span.set_attribute("http.response.status_code", response.status_code)
+                            response.raise_for_status()
+                            async for line in bounded_lines(response, max_bytes=2097152):
+                                if not line.startswith("data:"):
+                                    continue
+                                payload = line[5:].strip()
+                                if payload == "[DONE]":
+                                    break
+                                chunk = json.loads(payload)
+                                if "error" in chunk:
+                                    raise LLMError("Provider stream unavailable")
+                                self._record_usage(chunk.get("usage"), span)
+                                for choice in chunk.get("choices", []):
+                                    reason = choice.get("finish_reason")
+                                    if reason is not None:
+                                        if reason != "stop":
+                                            raise LLMError("Incomplete completion")
+                                        finished = True
+                                    delta = choice.get("delta", {}).get("content")
+                                    if delta:
+                                        if not isinstance(delta, str):
+                                            raise LLMError("Invalid stream content")
+                                        chars += len(delta)
+                                        if chars > 64000:
+                                            raise LLMError("Completion too long")
+                                        emitted = True
+                                        yield delta
+                        if not finished or not emitted:
+                            raise LLMError("Stream ended before completion")
                     self.circuit.success()
                     return
                 except httpx.HTTPError as exc:
@@ -169,3 +193,7 @@ class CerebrasClient:
         except Exception:
             self.circuit.failure()
             raise LLMError("Provider stream unavailable") from None
+
+
+def _token_count(value) -> int:
+    return value if type(value) is int and 0 <= value <= 2**31 - 1 else 0

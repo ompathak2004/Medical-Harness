@@ -3,13 +3,16 @@ from __future__ import annotations
 import asyncio
 import html
 import re
+from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx
+from opentelemetry.trace import SpanKind
 
 from app.config import get_settings
 from app.transport import CircuitBreaker
 from app.streaming import bounded_json
+from app.telemetry import operation
 
 REFERENCE_TOOLS = {
     "drug_labels": {
@@ -129,14 +132,16 @@ class ReferenceTools:
         return bool(re.fullmatch(r"[A-Za-z][A-Za-z -]{1,79}", query))
 
     async def _get(self, url, params, not_found_ok=False, max_bytes=262144):
-        async with self.client.stream("GET", url, params=params) as response:
-            if not_found_ok and response.status_code == 404:
-                return None
-            response.raise_for_status()
-            payload = await bounded_json(response, max_bytes=max_bytes)
-        if not isinstance(payload, dict):
-            raise ValueError("Invalid reference response")
-        return payload
+        with operation("provider.reference", {"server.address": urlsplit(url).hostname}, kind=SpanKind.CLIENT) as span:
+            async with self.client.stream("GET", url, params=params) as response:
+                span.set_attribute("http.response.status_code", response.status_code)
+                if not_found_ok and response.status_code == 404:
+                    return None
+                response.raise_for_status()
+                payload = await bounded_json(response, max_bytes=max_bytes)
+            if not isinstance(payload, dict):
+                raise ValueError("Invalid reference response")
+            return payload
 
     async def _label_sections(self, query):
         api_key = get_settings().openfda_api_key
