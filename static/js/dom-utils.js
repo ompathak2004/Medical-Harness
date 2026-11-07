@@ -228,7 +228,7 @@ const TOOL_FIELD_LABELS = {
   grade: "MRC Grade",
   description: "Description"
 };
-const TOOL_SKIP_FIELDS = /* @__PURE__ */ new Set(["tool", "key", "recommendation", "error", "source", "inputs", "alerts", "hard_stop"]);
+const TOOL_SKIP_FIELDS = /* @__PURE__ */ new Set(["tool", "key", "recommendation", "error", "source", "inputs", "alerts", "hard_stop", "status"]);
 function toolCardRows(tr, headlineKey) {
   const rows = [];
   for (const [key, val] of Object.entries(tr)) {

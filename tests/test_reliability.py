@@ -87,6 +87,26 @@ async def test_missing_calculator_inputs_never_become_zero():
     assert result["handoff"]["reason"] == "tool_input_missing"
 
 
+@pytest.mark.parametrize("key", ["child_dose_check", "ors_planner", "peak_flow_zone", "hf_weight_zone"])
+async def test_high_risk_tools_require_form_inputs_without_waiting_for_evidence(key):
+    class WaitingEvidence:
+        async def search(self, conversation, conversation_id):
+            await asyncio.Future()
+
+    pipeline = make_pipeline({"action": "answer"}, tools={"selected_tools": [key]}, extract={
+        "medicine": "acetaminophen", "concentration": "160mg/5mL", "weight": 14, "weight_units": "kg", "age_months": 36,
+    })
+    pipeline.evidence = WaitingEvidence()
+    events = await asyncio.wait_for(collect(pipeline, ["I do not know all the values. Can you calculate this?"]), timeout=2)
+    result = events[-1][1]
+    (tool,) = result["tool_results"]
+    assert tool["key"] == key and tool["status"] == "confirmation_required"
+    assert set(tool) == {"key", "tool", "source", "scope", "status", "error"}
+    assert result["handoff"]["reason"] == "tool_confirmation_required"
+    assert not result["articles"]
+    assert not any(event == "answer_chunk" for event, _ in events)
+
+
 async def test_browser_sessions_do_not_share_patient_cache_entries():
     pipeline = make_pipeline({"action": "answer"})
     token = cache_scope.set("browser-one")

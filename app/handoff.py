@@ -16,6 +16,7 @@ TRACE_STEPS = ("triage", "tools", "evidence", "draft", "review")
 TRACE_DETAILS = frozenset({
     "", "invalid_json", "unavailable", "selected=1", "selected=2", "partial", "selection_failed",
     "empty", "error", "reference_sources", "over_budget", "interrupted", "attempts=2", "revised_once",
+    "confirmation_required", "not_used",
 })
 
 ASK_ME_3 = ("What is my main problem?", "What do I need to do?", "Why is it important?")
@@ -62,6 +63,11 @@ HANDOFF_TEMPLATES: dict[str, tuple[str, str, str]] = {
         "Which measurements or tests do I need, and what should I do next?",
         "Why do these numbers matter for my situation?",
     ),
+    "tool_confirmation_required": (
+        "The app asked me to enter the values in a form before calculating. Can you help me verify those values?",
+        "What should I do while I confirm the information?",
+        "What signs mean I should seek help sooner?",
+    ),
     "answer_available": (
         "I read a sourced explanation about my question; is it relevant to me?",
         "Which of the listed sources applies to my situation, and what should I do next?",
@@ -80,6 +86,7 @@ LIMITATION_BY_REASON = {
     "triage_unavailable": "The emergency screen could not be completed. If this could be an emergency, contact your local emergency services now.",
     "review_unavailable": "The answer did not pass the safety review or the review did not complete; nothing was shown.",
     "clarification_limit": "The app asked its one round of clarifying questions; remaining gaps were not resolved.",
+    "tool_confirmation_required": "The tool needs values you confirm in its form. No value was computed.",
 }
 LIMITATION_PENDING = "The app asked these questions and has not answered yet: {questions}"
 LIMITATION_UNREACHABLE = "{tool} could not be reached; this says nothing about the medicine."
@@ -245,7 +252,7 @@ def build_handoff(
         if result.get("tool") == "RxNorm ingredients" and result.get("status") != "unavailable" and LIMITATION_RXNORM not in limitations:
             limitations.append(LIMITATION_RXNORM)
     for calc in calculations:
-        if calc["error"] or calc["missing_inputs"]:
+        if reason != "tool_confirmation_required" and (calc["error"] or calc["missing_inputs"]):
             limitations.append(LIMITATION_CALC_INPUTS.format(tool=calc["tool"]))
     if support and support["uncited_sources"]:
         limitations.append(LIMITATION_UNCITED.format(sources=", ".join(map(str, support["uncited_sources"]))))

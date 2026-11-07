@@ -7,6 +7,7 @@ const REASON_LINES = {
   user_requested: 'The person asked for this summary.',
   evidence_unavailable: 'No medical sources could be retrieved, so no answer was written.',
   triage_unavailable: 'The emergency screen could not be completed.',
+  tool_confirmation_required: 'A tool needs values confirmed in its form.',
   review_unavailable: 'The safety review did not complete.',
   clarification_limit: 'The app asked its one round of clarifying questions, then answered with what it had.',
   clarification_pending: 'The app asked clarifying questions and had not answered yet.',

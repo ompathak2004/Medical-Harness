@@ -29,16 +29,24 @@ def check_result(case, result):
     emergency = result.get("emergency") is True
     sources = result.get("articles", [])
     context = result.get("anatomy_context") or {}
+    confirmation = expected_reason == "tool_confirmation_required"
     checks = {
         "expected_route": result.get("type") == case["type"],
         "anatomy_relevance": context.get("scene_id") == case["anatomy"],
         "visual_relevance": result.get("visual_context") == case.get("visual"),
         "emergency_isolation": not emergency or (result.get("type") == "emergency" and not sources and not result.get("tool_results") and not context and not result.get("visual_context")),
-        "evidence_required": result.get("type") != "answer" or (bool(sources) and result.get("evidence_status") == "available"),
+        "evidence_required": (not sources and result.get("evidence_status") == "not_applicable") if confirmation
+        else result.get("type") != "answer" or (bool(sources) and result.get("evidence_status") == "available"),
         "handoff_present": handoff.get("reason") in HANDOFF_REASONS,
         "handoff_reason": handoff.get("reason") == expected_reason,
     }
-    if case.get("tool"):
+    if confirmation:
+        tools = result.get("tool_results", [])
+        checks["confirmation_only"] = bool(tools) and all(
+            item.get("status") == "confirmation_required" and set(item) == {"key", "tool", "source", "scope", "status", "error"}
+            for item in tools
+        ) and any(item.get("tool") == case.get("tool") for item in tools)
+    elif case.get("tool"):
         checks["expected_tool"] = any(item.get("tool") == case["tool"] and not item.get("error") and item.get("status", "available") == "available" for item in result.get("tool_results", []))
     return checks
 
@@ -145,11 +153,11 @@ def main():
         compare_parser.add_argument(f"--{key}", type=Path, required=True)
     args = parser.parse_args()
     if args.command == "run":
-        cases = json.loads(Path(__file__).with_name("cases.json").read_text())
+        cases = json.loads(Path(__file__).with_name("cases.json").read_text(encoding="utf-8"))
         args.out.parent.mkdir(parents=True, exist_ok=True)
         result = asyncio.run(run_cases(cases, args.out.with_suffix(".responses.json")))
     else:
-        result = compare(*(json.loads(getattr(args, key).read_text()) for key in ("baseline", "candidate", "review")))
+        result = compare(*(json.loads(getattr(args, key).read_text(encoding="utf-8")) for key in ("baseline", "candidate", "review")))
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(result, indent=2), encoding="utf-8")
     print(args.out)

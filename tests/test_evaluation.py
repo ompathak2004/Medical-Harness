@@ -92,7 +92,7 @@ def test_case_file_includes_handoff_and_new_tool_cases():
     from app.tools.clinical import TOOL_REGISTRY
     from app.tools.references import REFERENCE_TOOLS
 
-    cases = {case["id"]: case for case in json.loads((Path(__file__).parents[1] / "evals" / "cases.json").read_text())}
+    cases = {case["id"]: case for case in json.loads((Path(__file__).parents[1] / "evals" / "cases.json").read_text(encoding="utf-8"))}
     assert len(cases) == 35
     registered = {info["name"] for info in REFERENCE_TOOLS.values()} | {
         entry["function"]({}).get("tool") for entry in TOOL_REGISTRY.values()}
@@ -114,6 +114,7 @@ def _scripted_pipeline(triage, tools=None, extract=None, references=None):
 
 @pytest.mark.parametrize("case_id,tool_key,extract", [
     ("child_dose_check", "child_dose_check", {"medicine": "acetaminophen", "concentration": "160mg/5mL", "weight": 14, "weight_units": "kg", "age_months": 36}),
+    ("child_dose_missing_concentration", "child_dose_check", {"medicine": "ibuprofen", "concentration": "100mg/5mL", "weight": 16, "weight_units": "kg", "age_months": 48}),
     ("growth_percentile", "growth_percentile", {"sex": "male", "age_months": 6, "measure": "weight", "value": 7.5}),
     ("steadi_fall_risk", "steadi_fall_risk", None),
     ("rxnorm_ingredients", "rxnorm_ingredients", {"query": "Tylenol"}),
@@ -129,7 +130,7 @@ async def test_new_patient_tool_cases_pass_their_checks_with_scripted_doubles(ca
     from evals.doubles import mock_reference_client
     from evals.failures import _rxnorm_responder
 
-    cases = {case["id"]: case for case in json.loads((Path(__file__).parents[1] / "evals" / "cases.json").read_text())}
+    cases = {case["id"]: case for case in json.loads((Path(__file__).parents[1] / "evals" / "cases.json").read_text(encoding="utf-8"))}
     case = cases[case_id]
     client = mock_reference_client(_rxnorm_responder)
     pipeline = _scripted_pipeline({"action": "answer"}, {"selected_tools": [tool_key]},
@@ -142,21 +143,3 @@ async def test_new_patient_tool_cases_pass_their_checks_with_scripted_doubles(ca
         await client.aclose()
     checks = check_result(case, result)
     assert all(checks.values()), [name for name, ok in checks.items() if not ok]
-
-
-async def test_missing_concentration_case_asks_a_follow_up():
-    import json
-    import uuid
-    from pathlib import Path
-
-    from app.pipeline import cache_scope
-
-    case = {case["id"]: case for case in json.loads((Path(__file__).parents[1] / "evals" / "cases.json").read_text())}["child_dose_missing_concentration"]
-    pipeline = _scripted_pipeline({"action": "ask", "follow_up_questions": ["What strength is printed on the bottle?"]})
-    cache_scope.set(str(uuid.uuid4()))
-    try:
-        result = await pipeline.run(case["conversation"], str(uuid.uuid4()))
-    finally:
-        await pipeline.aclose()
-    checks = check_result(case, result)
-    assert result["type"] == "follow_up" and all(checks.values()), [name for name, ok in checks.items() if not ok]

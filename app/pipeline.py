@@ -45,6 +45,8 @@ CLARIFICATION_INTRO = (
     "A few details will help me understand your question. "
     "You can write ‘not sure’ for anything you do not know."
 )
+FORM_CONFIRMATION_TOOLS = frozenset({"child_dose_check", "ors_planner", "peak_flow_zone", "hf_weight_zone"})
+FORM_CONFIRMATION_DETAIL = "Open the tool and confirm the values yourself before calculating a result."
 
 
 class ReviewUnavailable(RuntimeError):
@@ -277,10 +279,24 @@ class AgentPipeline:
                     "evidence", self._retrieve_evidence(conversation, conversation_id, evidence_info))
             else:
                 yield ("step", {"step": "tools", "message": "Checking relevant tools and sources…"})
-                tool_results, evidence_result = await asyncio.gather(
-                    trace.timed("tools", self._run_tools(conv_text, tools_info)),
-                    trace.timed("evidence", self._retrieve_evidence(conversation, conversation_id, evidence_info)),
-                )
+                async with asyncio.TaskGroup() as tasks:
+                    retrieval = tasks.create_task(trace.timed(
+                        "evidence", self._retrieve_evidence(conversation, conversation_id, evidence_info)))
+                    tool_results = await trace.timed("tools", self._run_tools(conv_text, tools_info))
+                    confirmation_needed = any(result.get("status") == "confirmation_required" for result in tool_results)
+                    if confirmation_needed:
+                        retrieval.cancel()
+                if confirmation_needed:
+                    trace.finish("tools", "fallback", "confirmation_required")
+                    trace.finish("evidence", "fallback", "not_used")
+                    self._outcomes["tool_confirmation_required"] += 1
+                    yield ("result", _empty_result(
+                        answer=FORM_CONFIRMATION_DETAIL,
+                        tool_results=tool_results,
+                        handoff=handoff("tool_confirmation_required", tool_results=tool_results),
+                    ))
+                    return
+                evidence_result = retrieval.result()
             if sheet_mode:
                 trace.finish("tools", "skipped")
             elif tools_info.get("failed"):
@@ -421,7 +437,7 @@ class AgentPipeline:
 
         return {
             key: self._outcomes[key]
-            for key in ("conversation", "follow_up", "answer", "emergency", "evidence_unavailable")
+            for key in ("conversation", "follow_up", "answer", "emergency", "evidence_unavailable", "tool_confirmation_required")
         }
 
     @staticmethod
@@ -516,6 +532,16 @@ class AgentPipeline:
         if not selected:
             return []
 
+        confirmations = []
+        for key in selected:
+            if key in FORM_CONFIRMATION_TOOLS:
+                info = self.tools[key]
+                confirmations.append({
+                    "key": key, "tool": info["name"], "source": info["source"], "scope": info["scope"],
+                    "status": "confirmation_required", "error": FORM_CONFIRMATION_DETAIL,
+                })
+        if confirmations:
+            return confirmations
 
         extractions = await asyncio.gather(
             *(

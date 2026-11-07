@@ -312,6 +312,26 @@ test('a chat hard stop card shows no amount and the launch button asks to comple
   await expect(dialog.locator('.tool-figure')).toHaveCount(0);
 });
 
+test('a form confirmation opens a blank pediatric tool and waits for user input', async ({ page }) => {
+  const calls = await mockTools(page);
+  await page.route('**/api/chat/stream', route => route.fulfill({
+    contentType: 'text/event-stream',
+    body: sse('result', {
+      type: 'answer', answer: 'Open the tool and confirm the values yourself before calculating a result.',
+      articles: [], handoff: { reason: 'tool_confirmation_required' },
+      tool_results: [{ key: 'child_dose_check', tool: 'Child fever-medicine dose check', status: 'confirmation_required' }],
+    }),
+  }));
+  await page.goto('/');
+  await page.locator('#user-input').fill('The medicine strength is unknown.');
+  await page.locator('#user-input').press('Enter');
+  await page.getByRole('button', { name: 'Open the tool to complete it' }).click();
+  const dialog = page.locator('dialog.tool-dialog');
+  await expect(dialog.getByLabel('Child’s weight', { exact: true })).toHaveValue('');
+  await expect(dialog.locator('.tool-figure')).toHaveCount(0);
+  expect(calls).toEqual([]);
+});
+
 test('the handoff gets a ninth section with the tool summary, and a tools-only handoff says no question was asked', async ({ page }) => {
   await mockTools(page, { child_dose_check: childResult });
   // Tools only: no chat yet.

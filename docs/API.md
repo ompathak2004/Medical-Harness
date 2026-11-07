@@ -101,7 +101,7 @@ Numbered citations in `answer` refer to the structured `articles` array. Recogni
 
 ## Metrics
 
-`GET /api/metrics` is available only when `METRICS_TOKEN` is set. Send `Authorization: Bearer <token>`. Without a matching token, the route returns 404. It reports numeric usage, cache counters, and completed outcome counts (`conversation`, `follow_up`, `answer`, `emergency`, and `evidence_unavailable`), not question text. Counts are per process or Vercel Function instance.
+`GET /api/metrics` is available only when `METRICS_TOKEN` is set. Send `Authorization: Bearer <token>`. Without a matching token, the route returns 404. It reports numeric usage, cache counters, and completed outcome counts (`conversation`, `follow_up`, `answer`, `emergency`, `evidence_unavailable`, and `tool_confirmation_required`). Counts are per process or Vercel Function instance.
 
 ## Limits and errors
 
@@ -135,7 +135,7 @@ Every `result` (`answer`, `follow_up`, `emergency`, `conversation`, and evidence
 - `sources` are the numbered `articles` sent in the result. `kind` is `research`, `abstract`, or `label_section`; `cited` says whether the reviewed answer cites that index.
 - `limitations` are fixed strings chosen by condition, always starting with the general-information and emergency-screen lines and ending with the citation-check line. "Routine" urgency only means the emergency screen did not fire.
 - `clinician_questions` are fixed templates under the Ask Me 3 headings. Only calculator results and the source count are substituted; message text never is.
-- `trace.steps` always has five rows in the order `triage`, `tools`, `evidence`, `draft`, `review`. Status is `ok`, `skipped`, `failed`, or `fallback`; `detail` comes from a fixed vocabulary (`invalid_json`, `unavailable`, `selected=N`, `partial`, `selection_failed`, `empty`, `error`, `reference_sources`, `over_budget`, `interrupted`, `attempts=2`, `revised_once`) and never contains provider or user text. `elapsed_ms` is the step's duration; `tools` and `evidence` run concurrently and are timed separately.
+- `trace.steps` always has five rows in the order `triage`, `tools`, `evidence`, `draft`, `review`. Status is `ok`, `skipped`, `failed`, or `fallback`. Detail values come from a fixed vocabulary that includes `confirmation_required` for a tool that needs a form and `not_used` for its concurrent retrieval. `elapsed_ms` is the step's duration. Tools and evidence run concurrently and are timed separately.
 - `trace.claim_support` is `null` when no answer was produced. It is coverage, not verification: it shows which retrieved sources the reviewed answer pointed at, not whether a statement is true.
 
 | `reason` | `urgency` | When |
@@ -146,6 +146,7 @@ Every `result` (`answer`, `follow_up`, `emergency`, `conversation`, and evidence
 | `evidence_unavailable` | `routine` | No sources were retrieved, including a provider failure. |
 | `clarification_limit` | `routine` | An answer was produced after the one clarification round while triage still wanted more detail. |
 | `tool_input_missing` | `routine` | An answer was produced but a calculator reported `missing_inputs` or an input `error`. |
+| `tool_confirmation_required` | `routine` | A fixed reply links to a form. The response carries no computed value or articles, and `evidence_status` is `not_applicable`. |
 | `answer_available` | `routine` | A reviewed answer with sources. |
 | `triage_unavailable` | `unknown` | The emergency screen could not finish. Only in the 503 body and `error` event. |
 | `review_unavailable` | `unknown` if triage never completed, otherwise `routine` | `ReviewUnavailable` or a request timeout. Only in the 503 body and `error` event. |
@@ -167,6 +168,8 @@ Calculator results include `tool`, `source`, `scope`, and a numeric score or val
 `non_hdl_cholesterol` accepts `total_cholesterol`, `hdl_cholesterol`, `total_units`, and `hdl_units` from the same lipid panel. Units must match and be `mg/dL` or `mmol/L`. The result contains `value` and `units` alongside source/scope metadata. It does not classify cardiovascular risk or supply a treatment target. HDL above total, mixed/unknown units, nonfinite or negative inputs, and total above 1,000 mg/dL or 30 mmol/L are rejected. Values are rounded to two decimal places.
 
 Every successful calculator result also echoes the validated `inputs` object (field name to value) so the handoff and the tool card can show exactly what was used.
+
+For `child_dose_check`, `ors_planner`, `peak_flow_zone`, and `hf_weight_zone`, chat returns a tool entry with `key`, `tool`, `source`, `scope`, `status: "confirmation_required"`, and an explanatory `error`. It carries no model-extracted inputs or computed values. The form submits the user's confirmed values to `POST /api/tools/{key}`.
 
 `pack_years` accepts `packs_per_day` (0.05 to 10) and `years_smoked` (0 to 100) and returns `value` (their product rounded to one decimal), `units: "pack-years"`, and a `recommendation` quoting the USPSTF lung cancer screening wording as a conversation starter; it does not decide eligibility. `waist_to_height` accepts `waist_cm` (40 to 250) and `height_cm` (100 to 250) and returns `value` (rounded to two decimals), `units: "ratio"`, and a `recommendation` quoting NICE NG246's wording; a waist at or above height is rejected as an input error. Both require explicit numbers and never estimate a missing one.
 
