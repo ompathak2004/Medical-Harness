@@ -105,7 +105,7 @@ Numbered citations in `answer` refer to the structured `articles` array. Recogni
 
 ## Limits and errors
 
-Validation errors use normal FastAPI HTTP statuses. The app may return 429 for the per-instance chat rate limit or 503 when busy, timed out, or unable to complete a safe answer. Do not present a 503 as a medical answer. A 503 caused by a failed review or a timeout has the body `{"detail": "Unable to complete the answer review. Please try again.", "handoff": {...}}`; `detail` is always a string. See [Clinician handoff](#clinician-handoff). See [configuration](CONFIGURATION.md) for limit settings.
+Validation errors use normal FastAPI HTTP statuses. The app may return 429 for the per-instance chat rate limit or 503 when busy, timed out, or unable to complete a safe answer. A failed emergency screen, a failed review, or a timeout returns a 503 body with a string `detail` and a `handoff` object. The SSE equivalent is an `error` event. A failed screen or timeout includes fixed guidance to contact local emergency services if the situation could be an emergency. See [Clinician handoff](#clinician-handoff) and [configuration](CONFIGURATION.md).
 
 ## Clinician handoff
 
@@ -147,6 +147,7 @@ Every `result` (`answer`, `follow_up`, `emergency`, `conversation`, and evidence
 | `clarification_limit` | `routine` | An answer was produced after the one clarification round while triage still wanted more detail. |
 | `tool_input_missing` | `routine` | An answer was produced but a calculator reported `missing_inputs` or an input `error`. |
 | `answer_available` | `routine` | A reviewed answer with sources. |
+| `triage_unavailable` | `unknown` | The emergency screen could not finish. Only in the 503 body and `error` event. |
 | `review_unavailable` | `unknown` if triage never completed, otherwise `routine` | `ReviewUnavailable` or a request timeout. Only in the 503 body and `error` event. |
 
 On the answer path precedence is `clarification_limit`, then `tool_input_missing`, then `answer_available`. A timeout has no pipeline trace, so its handoff is built by the route with all five steps `skipped`.

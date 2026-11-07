@@ -11,14 +11,23 @@ from tests.test_pipeline import make_pipeline, collect, FakeEvidence, SAFETY_KEY
 
 
 async def test_only_reviewed_revision_reaches_stream():
-    pipeline = make_pipeline({"action": "answer"}, safety={"is_safe": False, "revised_answer": "Reviewed answer [1]."})
+    pipeline = make_pipeline({"action": "answer"}, safety={
+        "is_safe": False, "issues": ["Missing context"], "revised_answer": "Reviewed answer [1].",
+    })
     events = await collect(pipeline, ["What is flu?"])
     chunks = [data["text"] for kind, data in events if kind == "answer_chunk"]
     assert chunks == ["Reviewed answer [1]."]
     assert events[-1][1]["answer"] == "Reviewed answer [1]."
 
 
-@pytest.mark.parametrize("review", [{}, {"is_safe": "true"}, {"is_safe": False}, {"is_safe": False, "revised_answer": ""}])
+@pytest.mark.parametrize("review", [
+    {},
+    {"is_safe": True},
+    {"is_safe": "true", "issues": [], "revised_answer": ""},
+    {"is_safe": True, "issues": None, "revised_answer": ""},
+    {"is_safe": True, "issues": [], "revised_answer": "Unexpected revision [1]."},
+    {"is_safe": False, "issues": [], "revised_answer": "Unexpected approval [1]."},
+])
 async def test_invalid_review_fails_closed(review):
     pipeline = make_pipeline({"action": "answer"})
     pipeline.llm.script[SAFETY_KEY] = json.dumps(review)
@@ -40,20 +49,33 @@ async def test_answer_and_review_include_original_context():
 
 
 async def test_emergency_uses_one_call_and_no_evidence_or_anatomy():
-    pipeline = make_pipeline({"action": "emergency"})
+    pipeline = make_pipeline({"action": "emergency", "follow_up_questions": None, "conversation_kind": []})
     result = await pipeline.run(["I cannot breathe"], "c")
     assert result["emergency"]
     assert len(pipeline.llm.calls) == 1
     assert result["anatomy_context"] is None
 
 
-async def test_missing_evidence_is_explicit_and_skips_answer_generation():
+@pytest.mark.parametrize("articles", [[], [{"title": "Metadata only", "url": "https://example.org", "tldr": "  "}]])
+async def test_missing_evidence_is_explicit_and_skips_answer_generation(articles):
     pipeline = make_pipeline({"action": "answer"})
-    pipeline.evidence = FakeEvidence(articles=[], response="Unverified summary")
+    pipeline.evidence = FakeEvidence(articles=articles, response="Unverified summary")
     result = await pipeline.run(["Question"], "c")
     assert result["evidence_status"] == "unavailable"
     assert "Unverified summary" not in result["answer"]
     assert not any(SAFETY_KEY in system for _, system in pipeline.llm.calls)
+
+
+async def test_metadata_only_sources_are_excluded_before_citation_numbering():
+    pipeline = make_pipeline({"action": "answer"})
+    pipeline.evidence = FakeEvidence(articles=[
+        {"title": "Metadata only", "url": "https://example.org/metadata"},
+        {"title": "Study with an excerpt", "url": "https://example.org/study", "tldr": "Synthetic supporting excerpt."},
+    ], response="Old summary [2]")
+    result = await pipeline.run(["Explain a health topic"], "c")
+    assert [article["title"] for article in result["articles"]] == ["Study with an excerpt"]
+    assert result["handoff"]["sources"][0]["cited"] is True
+    assert all("Old summary" not in user for user, _ in pipeline.llm.calls)
 
 
 async def test_missing_calculator_inputs_never_become_zero():

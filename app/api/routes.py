@@ -14,7 +14,7 @@ from app import __version__
 from app.config import get_settings
 from app.context import request_context, resolve_context, user_turn_times
 from app.handoff import build_handoff
-from app.pipeline import ReviewUnavailable, cache_scope
+from app.pipeline import ReviewUnavailable, TriageUnavailable, cache_scope
 from app.prompts import WHEN_TO_CALL_REQUEST
 from app.schemas import ChatRequest, ChatResponse, ToolRunRequest, ToolRunResponse
 from app.tools.clinical import TOOL_REGISTRY
@@ -68,12 +68,17 @@ def _validate_conversation(req: ChatRequest) -> None:
 
 
 REVIEW_UNAVAILABLE_DETAIL = "Unable to complete the answer review. Please try again."
+TRIAGE_UNAVAILABLE_DETAIL = (
+    "I couldn’t assess how urgent this may be. If this could be an emergency, contact your local emergency services now. "
+    "For other questions, please try again."
+)
 
 
 def _failure_handoff(req: ChatRequest, exc: BaseException | None = None) -> dict:
     """Handoff for an error payload: the pipeline's own when it set one, else nothing ran."""
     return getattr(exc, "handoff", None) or build_handoff(
-        _turns(req), "review_unavailable", None, triage_done=False
+        _turns(req), "triage_unavailable" if isinstance(exc, TriageUnavailable) else "review_unavailable",
+        None, triage_done=False,
     )
 
 
@@ -101,7 +106,10 @@ async def chat(req: ChatRequest, request: Request) -> ChatResponse:
     except (ReviewUnavailable, asyncio.TimeoutError) as exc:
         return JSONResponse(
             status_code=503,
-            content={"detail": REVIEW_UNAVAILABLE_DETAIL, "handoff": _failure_handoff(req, exc)},
+            content={
+                "detail": TRIAGE_UNAVAILABLE_DETAIL if isinstance(exc, (TriageUnavailable, TimeoutError)) else REVIEW_UNAVAILABLE_DETAIL,
+                "handoff": _failure_handoff(req, exc),
+            },
         )
     return ChatResponse(conversation_id=conversation_id, request_context=context, **result)
 
@@ -152,7 +160,8 @@ async def chat_stream(req: ChatRequest, request: Request) -> StreamingResponse:
         except Exception as exc:
             logger.warning("chat_stream.failed")
             yield _sse("error", {
-                "detail": "Unable to complete your answer safely. Please try again.",
+                "detail": (TRIAGE_UNAVAILABLE_DETAIL if isinstance(exc, (TriageUnavailable, TimeoutError))
+                           else "Unable to complete your answer safely. Please try again."),
                 "handoff": _failure_handoff(req, exc),
             })
         finally:

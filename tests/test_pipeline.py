@@ -70,7 +70,7 @@ def make_pipeline(triage: dict, tools: dict | None = None, safety: dict | None =
         EXTRACT_KEY: json.dumps(extract or {}),
     }
     if safety and safety.get("is_safe") is False and safety.get("revised_answer"):
-        script[SAFETY_KEY] = [json.dumps(safety), json.dumps({"is_safe": True})]
+        script[SAFETY_KEY] = [json.dumps(safety), json.dumps({"is_safe": True, "issues": [], "revised_answer": ""})]
     return AgentPipeline(llm=FakeLLM(script), evidence=FakeEvidence())
 
 

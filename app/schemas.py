@@ -43,7 +43,7 @@ class ChatRequest(BaseModel):
 
 
 HandoffReason = Literal[
-    "user_requested", "evidence_unavailable", "review_unavailable", "clarification_limit",
+    "user_requested", "evidence_unavailable", "triage_unavailable", "review_unavailable", "clarification_limit",
     "clarification_pending", "emergency", "tool_input_missing", "answer_available",
 ]
 Urgency = Literal["emergency", "routine", "unknown"]

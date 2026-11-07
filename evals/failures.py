@@ -350,7 +350,7 @@ FAULT_CASES: list[dict] = [
           {**ANSWER_STEPS, "tools": "skipped", "evidence": "failed:empty", "draft": "skipped", "review": "skipped"},
           "Same fixed reply as a timeout; the absence of sources is stated, not hidden."),
     _case("triage_malformed_json", "The triage model returns text that is not JSON.", build_triage_malformed_json,
-          "error:ReviewUnavailable", "review_unavailable", "unknown",
+          "error:TriageUnavailable", "triage_unavailable", "unknown",
           {"triage": "failed:invalid_json", "tools": "skipped", "evidence": "skipped", "draft": "skipped", "review": "skipped"},
           "Fails closed with urgency `unknown`; no retrieval, tools, or answer after a failed emergency screen."),
     _case("review_timeout", "The safety review call times out.", build_review_timeout,

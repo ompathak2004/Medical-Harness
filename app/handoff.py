@@ -42,6 +42,11 @@ HANDOFF_TEMPLATES: dict[str, tuple[str, str, str]] = {
         "What should I do next, given that I have no sourced information yet?",
         "What would change if I waited, and what signs mean I should not wait?",
     ),
+    "triage_unavailable": (
+        "The app could not assess how urgent my question was. Can you help me with it?",
+        "What should I do about these symptoms?",
+        "What signs mean I need emergency care?",
+    ),
     "review_unavailable": (
         "The app could not finish its safety review, so it showed me no answer. Can you help me with my question?",
         "What should I do next, given that I have no reviewed information yet?",
@@ -72,6 +77,7 @@ LIMITATION_GENERAL = "This is general information from an automated tool, not a 
 LIMITATION_SCREEN = "Emergency screen only: 'not flagged' is not a triage category."
 LIMITATION_BY_REASON = {
     "evidence_unavailable": "No medical sources were retrieved, so no answer was written.",
+    "triage_unavailable": "The emergency screen could not be completed. If this could be an emergency, contact your local emergency services now.",
     "review_unavailable": "The answer did not pass the safety review or the review did not complete; nothing was shown.",
     "clarification_limit": "The app asked its one round of clarifying questions; remaining gaps were not resolved.",
 }
@@ -251,7 +257,7 @@ def build_handoff(
 
     if reason == "emergency":
         urgency = "emergency"
-    elif reason == "review_unavailable" and not triage_done:
+    elif reason in {"triage_unavailable", "review_unavailable"} and not triage_done:
         urgency = "unknown"
     else:
         urgency = "routine"

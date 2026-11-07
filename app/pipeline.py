@@ -7,7 +7,9 @@ import inspect
 from contextvars import ContextVar
 from collections import Counter
 from collections.abc import AsyncIterator
-from typing import Literal
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, ConfigDict, StringConstraints, model_validator
 
 from app.cache import TTLCache, text_key
 from app.answer_format import remove_source_appendix
@@ -47,6 +49,31 @@ CLARIFICATION_INTRO = (
 
 class ReviewUnavailable(RuntimeError):
     handoff: dict | None = None
+
+
+class TriageUnavailable(ReviewUnavailable):
+    pass
+
+
+class _SafetyVerdict(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    is_safe: bool
+    issues: list[Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]]
+    revised_answer: str
+
+    @model_validator(mode="after")
+    def consistent_verdict(self):
+        if self.is_safe and (self.issues or self.revised_answer.strip()):
+            raise ValueError("An approved answer cannot have issues or a revision")
+        if not self.is_safe and not self.issues:
+            raise ValueError("A rejected answer must have issues")
+        return self
+
+
+def _has_excerpt(article: dict) -> bool:
+    excerpt = article.get("tldr")
+    return isinstance(excerpt, str) and bool(excerpt.strip())
 
 
 class _RunTrace:
@@ -185,7 +212,7 @@ class AgentPipeline:
             triage_info: dict = {}
             try:
                 triage = await self._triage(conv_text, triage_info)
-            except ReviewUnavailable:
+            except TriageUnavailable:
                 trace.finish("triage", "failed", triage_info.get("detail", "unavailable"))
                 raise
             trace.finish("triage", "ok")
@@ -369,6 +396,9 @@ class AgentPipeline:
                 handoff=handoff(reason, tool_results=tool_results, articles=articles, answer=answer, sheet=sheet_mode),
                 **({"sheet": build_when_to_call_sheet()} if sheet_mode else {}),
             ))
+        except TriageUnavailable as exc:
+            exc.handoff = handoff("triage_unavailable")
+            raise
         except ReviewUnavailable as exc:
             exc.handoff = handoff("review_unavailable", tool_results=tool_results, articles=articles)
             raise
@@ -379,7 +409,7 @@ class AgentPipeline:
         labels, papers = [], []
         for result in tool_results:
             for item in result.get("items", []):
-                if not item.get("tldr"):
+                if not _has_excerpt(item):
                     continue
                 if item.get("evidence_kind") == "label_section":
                     labels.append(item)
@@ -421,8 +451,12 @@ class AgentPipeline:
         async def compute():
             try:
                 if inspect.iscoroutinefunction(self.evidence.search):
-                    return await self.evidence.search(conversation, conversation_id)
-                return await asyncio.to_thread(self.evidence.search, conversation, conversation_id)
+                    result = await self.evidence.search(conversation, conversation_id)
+                else:
+                    result = await asyncio.to_thread(self.evidence.search, conversation, conversation_id)
+                articles = result.get("articles", [])
+                usable = [article for article in articles if _has_excerpt(article)]
+                return result if len(usable) == len(articles) else {**result, "articles": usable, "response": ""}
             except Exception:
                 logger.warning("pipeline.evidence failed")
                 info["error"] = True
@@ -440,25 +474,24 @@ class AgentPipeline:
             )
             info["detail"] = "invalid_json"
             triage = parse_json_response(raw)
-            if triage.get("action") not in {"ask", "answer", "emergency", "conversation"}:
-                raise ReviewUnavailable("Unable to assess this question. Please try again.")
-            if triage["action"] == "conversation":
-                kind = triage.get("conversation_kind")
-                if kind not in CONVERSATION_REPLIES:
-                    raise ReviewUnavailable("Unable to classify this message. Please try again.")
-                triage["conversation_kind"] = kind
-            questions = triage.get("follow_up_questions", [])
-            if not isinstance(questions, list) or any(not isinstance(q, str) or not q.strip() for q in questions):
-                raise ReviewUnavailable("Invalid clarification questions. Please try again.")
-            triage["follow_up_questions"] = list(dict.fromkeys(questions))[:3]
-            if triage["action"] == "ask" and not triage["follow_up_questions"]:
-                raise ReviewUnavailable("Unable to clarify this question. Please try again.")
+            action = triage.get("action")
+            if action not in {"ask", "answer", "emergency", "conversation"}:
+                raise ValueError("Invalid triage action")
+            if action == "conversation" and triage.get("conversation_kind") not in CONVERSATION_REPLIES:
+                raise ValueError("Invalid conversation classification")
+            if action == "ask":
+                questions = triage.get("follow_up_questions")
+                if not isinstance(questions, list) or not questions or any(
+                    not isinstance(q, str) or not q.strip() for q in questions
+                ):
+                    raise ValueError("Invalid clarification questions")
+                triage["follow_up_questions"] = list(dict.fromkeys(questions))[:3]
             return triage
 
         try:
             return await self._cached_step("triage", conv_text, compute)
         except Exception:
-            raise ReviewUnavailable("Unable to assess this question safely. Please try again.") from None
+            raise TriageUnavailable("Unable to complete the emergency screen") from None
 
     async def _run_tools(self, conv_text: str, info: dict) -> list[dict]:
         async def compute():
@@ -579,12 +612,11 @@ class AgentPipeline:
             user = SAFETY_USER.format(question=question, answer=candidate, citations=citations_text)
             try:
                 raw = await self.llm.generate(user, system=SAFETY_SYSTEM, max_tokens=4096, json_mode=True)
-                result = parse_json_response(raw)
-                if result.get("is_safe") is True and not result.get("issues"):
+                verdict = _SafetyVerdict.model_validate(parse_json_response(raw))
+                if verdict.is_safe:
                     return candidate
-                revised = result.get("revised_answer")
-                if attempt == 0 and result.get("is_safe") is False and isinstance(revised, str) and revised.strip():
-                    revised = remove_source_appendix(revised)
+                if attempt == 0 and verdict.revised_answer.strip():
+                    revised = remove_source_appendix(verdict.revised_answer)
                     self._validate_answer(revised, len(articles))
                     candidate = revised
                     if info is not None:
