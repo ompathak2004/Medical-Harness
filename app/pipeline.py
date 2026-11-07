@@ -657,7 +657,7 @@ class AgentPipeline:
             try:
                 with operation("review.verdict", {"medical_harness.attempt": attempt + 1}) as span:
                     raw = await self.llm.generate(user, system=SAFETY_SYSTEM, max_tokens=4096, json_mode=True)
-                    verdict = _SafetyVerdict.model_validate(parse_json_response(raw))
+                    verdict = _SafetyVerdict.model_validate(parse_json_response(raw, whole_object=True))
                     span.set_attribute("medical_harness.approved", verdict.is_safe)
                 if verdict.is_safe:
                     return candidate

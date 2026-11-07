@@ -39,6 +39,13 @@ async def test_invalid_review_fails_closed(review):
     assert "result" not in emitted
 
 
+async def test_review_with_trailing_text_cannot_approve_a_draft():
+    pipeline = make_pipeline({"action": "answer"})
+    pipeline.llm.script[SAFETY_KEY] = '{"is_safe":true,"issues":[],"revised_answer":""} Unexpected text.'
+    with pytest.raises(ReviewUnavailable):
+        await pipeline.run(["Synthetic question"], "c")
+
+
 async def test_answer_and_review_include_original_context():
     pipeline = make_pipeline({"action": "answer"})
     await pipeline.run(["I am allergic to penicillin", "Which medicine?", "Amoxicillin"], "c")
