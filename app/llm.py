@@ -39,7 +39,7 @@ class LLMError(RuntimeError):
 class CerebrasClient:
     def __init__(self, api_key: str, model="gpt-oss-120b", base_url="https://api.cerebras.ai/v1",
                  temperature=0.3, max_tokens=4096, timeout_seconds=45, max_retries=2,
-                 prompt_cache_key="", input_usd_per_million=None, output_usd_per_million=None):
+                 prompt_cache_key="", input_usd_per_million=None, output_usd_per_million=None, request_budget=None):
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
@@ -47,6 +47,7 @@ class CerebrasClient:
         self.prompt_cache_key = prompt_cache_key
         self.input_usd_per_million = input_usd_per_million
         self.output_usd_per_million = output_usd_per_million
+        self.request_budget = request_budget
         self.total_requests = 0
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
@@ -92,6 +93,11 @@ class CerebrasClient:
                 span.set_attribute("medical_harness.outcome", "circuit_open")
             raise
 
+    def _start_attempt(self):
+        if self.request_budget is not None and self.total_requests >= self.request_budget:
+            raise LLMError("Request budget exhausted")
+        self.total_requests += 1
+
     def _payload(self, user, system, *, stream=False, max_tokens=None, json_mode=False):
         messages = ([{"role": "system", "content": system}] if system else [])
         messages.append({"role": "user", "content": user})
@@ -113,7 +119,7 @@ class CerebrasClient:
             for attempt in range(self.max_retries):
                 try:
                     with provider_attempt("cerebras", attempt + 1, self.model) as span:
-                        self.total_requests += 1
+                        self._start_attempt()
                         async with self._client.stream("POST", "/chat/completions", json=self._payload(
                             user, system, max_tokens=max_tokens, json_mode=json_mode,
                         )) as response:
@@ -150,7 +156,7 @@ class CerebrasClient:
                 chars = 0
                 try:
                     with provider_attempt("cerebras", attempt + 1, self.model) as span:
-                        self.total_requests += 1
+                        self._start_attempt()
                         async with self._client.stream("POST", "/chat/completions", json=self._payload(user, system, stream=True)) as response:
                             span.set_attribute("http.response.status_code", response.status_code)
                             response.raise_for_status()

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import get_args
 
 from app.schemas import HandoffReason
+from app.handoff import citation_indices
 
 
 def digest(value):
@@ -30,28 +31,53 @@ def check_result(case, result):
     sources = result.get("articles", [])
     context = result.get("anatomy_context") or {}
     confirmation = expected_reason == "tool_confirmation_required"
+    citations = citation_indices(result.get("answer") or "")
     checks = {
         "expected_route": result.get("type") == case["type"],
         "anatomy_relevance": context.get("scene_id") == case["anatomy"],
         "visual_relevance": result.get("visual_context") == case.get("visual"),
         "emergency_isolation": not emergency or (result.get("type") == "emergency" and not sources and not result.get("tool_results") and not context and not result.get("visual_context")),
-        "evidence_required": (not sources and result.get("evidence_status") == "not_applicable") if confirmation
-        else result.get("type") != "answer" or (bool(sources) and result.get("evidence_status") == "available"),
+        "evidence_required": result.get("type") != "answer" or (
+            bool(sources) and result.get("evidence_status") == "available" and bool(citations)
+            and all(1 <= number <= len(sources) for number in citations)
+        ),
         "handoff_present": handoff.get("reason") in HANDOFF_REASONS,
         "handoff_reason": handoff.get("reason") == expected_reason,
     }
     if confirmation:
         tools = result.get("tool_results", [])
+        checks["evidence_required"] = not sources and result.get("evidence_status") == "not_applicable"
         checks["confirmation_only"] = bool(tools) and all(
             item.get("status") == "confirmation_required" and set(item) == {"key", "tool", "source", "scope", "status", "error"}
             for item in tools
         ) and any(item.get("tool") == case.get("tool") for item in tools)
     elif case.get("tool"):
-        checks["expected_tool"] = any(item.get("tool") == case["tool"] and not item.get("error") and item.get("status", "available") == "available" for item in result.get("tool_results", []))
+        tools = [item for item in result.get("tool_results", []) if item.get("tool") == case["tool"]]
+        checks["expected_tool"] = any(not item.get("error") and item.get("status", "available") == "available" for item in tools)
+        if "tool_inputs" in case:
+            checks["tool_inputs"] = any(item.get("inputs") == case["tool_inputs"] for item in tools)
     return checks
 
 
-async def run_cases(cases, responses_path):
+def summarize(records, usage, input_rate=None, output_rate=None):
+    times = sorted(record["elapsed_seconds"] for record in records)
+    answers = sum(record["reviewed_answer"] for record in records)
+    tokens = usage["prompt_tokens"] + usage["completion_tokens"]
+    cost = (usage["prompt_tokens"] * input_rate + usage["completion_tokens"] * output_rate) / 1_000_000 \
+        if input_rate is not None and output_rate is not None else None
+    return {
+        "p50_seconds": times[math.ceil(len(times) * 0.5) - 1],
+        "p95_seconds": times[math.ceil(len(times) * 0.95) - 1],
+        "reviewed_answers": answers,
+        "missed_emergencies": sum(r["expected_type"] == "emergency" and r["observed_type"] != "emergency" for r in records),
+        "wrong_tool_inputs": sum(r["checks"].get("tool_inputs") is False for r in records),
+        "confirmed_abstentions": sum(r["checks"].get("confirmation_only") is True for r in records),
+        "tokens_per_reviewed_answer": round(tokens / answers, 2) if answers else None,
+        "estimated_cerebras_usd": round(cost, 6) if cost is not None else None,
+    }
+
+
+async def run_cases(cases, responses_path, max_llm_requests):
     from app.config import get_settings
     from app.evidence import EvidenceRetriever
     from app.llm import CerebrasClient
@@ -62,7 +88,8 @@ async def run_cases(cases, responses_path):
     llm = CerebrasClient(api_key=settings.cerebras_api_key, model=settings.cerebras_model,
         base_url=settings.cerebras_base_url, temperature=settings.llm_temperature,
         max_tokens=settings.llm_max_tokens, timeout_seconds=settings.llm_timeout_seconds,
-        max_retries=settings.llm_max_retries)
+        max_retries=settings.llm_max_retries, prompt_cache_key=settings.cerebras_prompt_cache_key,
+        request_budget=max_llm_requests)
     evidence = EvidenceRetriever(settings.medisearch_api_key)
     references = ReferenceTools()
     pipeline = AgentPipeline(llm, evidence, references=references)
@@ -73,22 +100,32 @@ async def run_cases(cases, responses_path):
         for case in cases:
             cache_scope.set(str(uuid.uuid4()))
             start = time.monotonic()
+            result = {}
             try:
+                if llm.total_requests >= max_llm_requests:
+                    raise RuntimeError("Live evaluation request budget exhausted")
                 result = await asyncio.wait_for(pipeline.run(case["conversation"], str(uuid.uuid4())), settings.request_timeout_seconds)
                 checks = check_result(case, result)
                 responses.append({"id": case["id"], "result": result})
                 error = None
             except Exception as exc:
                 checks, error = {"completed": False}, type(exc).__name__
-            records.append({"id": case["id"], "checks": checks, "error_kind": error, "elapsed_seconds": round(time.monotonic() - start, 3)})
+            records.append({
+                "id": case["id"], "checks": checks, "error_kind": error, "elapsed_seconds": round(time.monotonic() - start, 3),
+                "expected_type": case["type"], "observed_type": result.get("type"),
+                "reviewed_answer": result.get("type") == "answer" and result.get("evidence_status") == "available",
+            })
             print(f"{case['id']}: {'pass' if all(checks.values()) else 'fail'}")
         budget = {key: getattr(settings, key) for key in (
             "llm_max_tokens", "llm_max_retries", "llm_temperature", "request_timeout_seconds",
             "max_answer_chars", "max_evidence_articles", "max_tldr_chars", "max_summary_chars")}
         responses_path.write_text(json.dumps({"run_id": run_id, "responses": responses}, indent=2), encoding="utf-8")
+        budget["max_llm_requests"] = max_llm_requests
+        usage = llm.usage_stats()
         return {"run_id": run_id, "case_hash": digest(cases), "budget_hash": digest(budget),
                 "model": settings.cerebras_model, "policy_hash": pipeline.policy_version,
-                "usage": llm.usage_stats(), "records": records,
+                "usage": usage, "records": records,
+                "metrics": summarize(records, usage, settings.cerebras_input_usd_per_million, settings.cerebras_output_usd_per_million),
                 "pass_rate": sum(all(item["checks"].values()) for item in records) / len(cases)}
     finally:
         await pipeline.aclose()
@@ -147,15 +184,20 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
     run = sub.add_parser("run")
     run.add_argument("--live", action="store_true", required=True)
+    run.add_argument("--case-set", choices=("core", "heldout"), default="core")
+    run.add_argument("--max-llm-requests", type=int, default=400)
     run.add_argument("--out", type=Path, required=True)
     compare_parser = sub.add_parser("compare")
     for key in ("baseline", "candidate", "review", "out"):
         compare_parser.add_argument(f"--{key}", type=Path, required=True)
     args = parser.parse_args()
     if args.command == "run":
-        cases = json.loads(Path(__file__).with_name("cases.json").read_text(encoding="utf-8"))
+        if args.max_llm_requests < 1:
+            parser.error("--max-llm-requests must be positive")
+        filename = "cases_holdout.json" if args.case_set == "heldout" else "cases.json"
+        cases = [case for case in json.loads(Path(__file__).with_name(filename).read_text(encoding="utf-8")) if not case.get("offline_only")]
         args.out.parent.mkdir(parents=True, exist_ok=True)
-        result = asyncio.run(run_cases(cases, args.out.with_suffix(".responses.json")))
+        result = asyncio.run(run_cases(cases, args.out.with_suffix(".responses.json"), args.max_llm_requests))
     else:
         result = compare(*(json.loads(getattr(args, key).read_text(encoding="utf-8")) for key in ("baseline", "candidate", "review")))
     args.out.parent.mkdir(parents=True, exist_ok=True)

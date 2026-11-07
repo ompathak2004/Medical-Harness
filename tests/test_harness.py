@@ -150,6 +150,23 @@ async def test_auth_failure_is_not_retried():
         await client.aclose()
 
 
+async def test_live_eval_cap_counts_retry_attempts(monkeypatch):
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(429)
+
+    monkeypatch.setattr("app.llm._retry_delay", lambda exc, attempt: 0)
+    client = await mock_llm(handler, request_budget=1)
+    try:
+        with pytest.raises(LLMError):
+            await client.generate("Synthetic test")
+        assert len(calls) == client.usage_stats()["requests"] == 1
+    finally:
+        await client.aclose()
+
+
 async def test_json_stage_has_explicit_budget_and_temperature():
     def handler(request):
         payload = json.loads(request.content)

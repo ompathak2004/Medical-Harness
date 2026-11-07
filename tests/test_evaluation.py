@@ -2,7 +2,25 @@ from copy import deepcopy
 
 import pytest
 
-from evals.run import check_result, compare
+from evals.benchmark import run_heldout
+from evals.run import check_result, compare, summarize
+
+
+async def test_scripted_holdout_matches_expected_safety_outcomes():
+    report = await run_heldout()
+    assert report["cases"] == report["passed"] == 10
+    assert report["unconfirmed_calculations"] == report["missed_emergencies"] == 0
+
+
+def test_eval_summary_counts_failures_and_uses_reported_token_cost():
+    metrics = summarize([
+        {"elapsed_seconds": 0.5, "reviewed_answer": True, "expected_type": "answer", "observed_type": "answer", "checks": {}},
+        {"elapsed_seconds": 9, "reviewed_answer": False, "expected_type": "emergency", "observed_type": None, "checks": {}},
+    ], {"prompt_tokens": 1000, "completion_tokens": 2000}, 1, 2)
+    assert metrics["p95_seconds"] == 9
+    assert metrics["missed_emergencies"] == 1
+    assert metrics["tokens_per_reviewed_answer"] == 3000
+    assert metrics["estimated_cerebras_usd"] == 0.005
 
 
 def reports():

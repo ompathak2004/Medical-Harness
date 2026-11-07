@@ -9,17 +9,29 @@ The old HealthBench script was removed. It reused asynchronous clients across se
 The thirty-five built-in cases in evals/cases.json probe emergency routing, anatomy relevance, all eight guide IDs, visual suppression, missing inputs, reference lookup, official label sections, pack-years and waist-to-height calculators, the patient tools (child dose check with complete inputs and with a missing concentration, growth percentile, STEADI with all twelve items answered, and RxNorm ingredients), the clarification limit, and instruction injection. Every case also checks that the result carries a clinician handoff (`handoff_present`) with the expected reason (`handoff_reason`). The expected reason defaults from the case type (emergency, clarification_pending for follow_up, user_requested for conversation, answer_available for answer); a case can override it with a `handoff_reason` field, as `handoff_after_clarification_limit` does. These are behavior checks, not clinical validation. The visual-routing cases are prospective evaluations; passing mocked regression tests does not mean the live model has passed these cases. Explicit opt-in is required:
 
 ```bash
-uv run python -m evals.run run --live --out data/evals/baseline.json
-uv run python -m evals.run run --live --out data/evals/candidate.json
+uv run python -m evals.run run --live --case-set heldout --max-llm-requests 80 --out data/evals/baseline.json
+uv run python -m evals.run run --live --case-set heldout --max-llm-requests 80 --out data/evals/candidate.json
 ```
 
-Run the baseline on its revision, make one reviewable change, then run the candidate. Keep the case file and provider settings fixed. Each case has a fresh cache scope. Reports contain run IDs, case/budget/prompt hashes, usage, elapsed time, and check outcomes. Failures remain in the denominator. Adjacent *.responses.json files contain synthetic outputs for clinical review. The data directory is ignored by Git and deployment. Do not substitute patient records for these fixtures.
+Run the baseline on its revision, make one reviewable change, then run the candidate. Keep the case set, budget, and provider settings fixed. Each case has a fresh cache scope. The request cap counts Cerebras HTTP attempts including retries. Unrun cases count as failures, and MediSearch can make up to two attempts per case. Reports include p50 and p95 latency, missed emergencies, wrong known tool inputs, confirmed abstentions, reported tokens per reviewed answer, and optional cost from configured token rates. Adjacent *.responses.json files contain synthetic outputs for review. Keep them in the ignored data directory.
 
 Changing `evals/cases.json` changes `case_hash`, and `compare` refuses reports with different hashes. The cases added with the clinician handoff (`pack_years`, `waist_to_height`, `label_sections`, `handoff_after_clarification_limit`) and the new handoff checks therefore need a new live baseline, run on the same revision as the candidate; older reports are not comparable.
 
 Both pediatric dosing cases expect `tool_confirmation_required` with no computed values, including when a concentration appears in the question. `tests/test_evaluation.py` runs those cases, growth, STEADI, and RxNorm through the real pipeline with scripted doubles. A live baseline is needed to assess routing by the hosted model on the current case set.
 
 Repeat runs before interpreting small improvements. Equal token budgets are not equal dollar costs across models; provider pricing and retry costs need separate review.
+
+## Reproducing the safety comparison without keys
+
+Run `uv run python evals/benchmark.py --out data/evals/candidate.json`. Use `--checkout` with a separate checkout or source archive of `b84bd00` to run the same fixtures against the audited version. The runner feeds scripted provider responses through each revision's actual pipeline.
+
+| Scripted check | Audited revision | Hardened pipeline |
+| --- | ---: | ---: |
+| Expected outcomes | 2 / 10 | 10 / 10 |
+| Calculations from unconfirmed values | 5 | 0 |
+| Explicit emergency routes lost | 1 | 0 |
+
+The cases cover missing and conflicting measurements, two emergency routes, an incomplete review verdict, metadata without an excerpt, and a valid BMI control. The same inputs and expectations were used for both runs. This comparison measures software behavior with controlled responses. Live model routing, claim support, and production latency require a separate run.
 
 ## Failure modes
 
