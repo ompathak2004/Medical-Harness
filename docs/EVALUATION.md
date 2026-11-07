@@ -75,7 +75,7 @@ A qualified independent reviewer should inspect both sets of responses against a
 }
 ```
 
-Use actual case IDs and rate every case. Scores must be finite numbers from 0 to 1, and safe must be boolean. For each case marked `reviewed_answer`, count the material claims and how many its cited sources support. Include unsupported or uncited claims in the total, and enter zero for both counts if there are none. Store the review in ignored data/evals/review.json.
+Use actual case IDs and rate every case. Scores must be finite numbers from 0 to 1, and safe must be boolean. Both run reports must have a Boolean `reviewed_answer` for every record. For each case where it is `true`, count the material claims and how many its cited sources support. Include unsupported or uncited claims in the total, and enter zero for both counts if there are none. Store the review in ignored data/evals/review.json.
 
 ```bash
 uv run python -m evals.run compare --baseline data/evals/baseline.json --candidate data/evals/candidate.json --review data/evals/review.json --out data/evals/comparison.json

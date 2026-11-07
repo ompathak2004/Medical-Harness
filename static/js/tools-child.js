@@ -38,7 +38,7 @@ const DOSE_CANNOT = 'This is the amount printed on US labels for this weight ban
 const exactAmount = (html, amount) => { const shown = `${Math.round(amount * 100) / 100} mL`; return shown === `${amount} mL` ? html : html.replaceAll(shown, `${amount} mL`); };
 
 const doseCheck = {
-  intro: 'Looks up the amount printed on US labels for your child\u2019s weight band. It does not work out a dose.',
+  intro: 'A fever in a baby under 3 months needs a same-day call to a clinician. This tool looks up the amount printed on US labels for your child\u2019s weight band.',
   submitLabel: 'Show the label amount',
   fields: [
     { name: 'medicine', label: 'Medicine', type: 'radio', required: true, options: [['acetaminophen', 'Acetaminophen (paracetamol)'], ['ibuprofen', 'Ibuprofen']] },

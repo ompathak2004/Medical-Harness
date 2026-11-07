@@ -37,7 +37,7 @@ from app.prompts import (
 from app.telemetry import operation
 from app.tools.anatomy import select_anatomy
 from app.tools.education import select_visual
-from app.tools.clinical import TOOL_REGISTRY
+from app.tools.clinical import INFANT_FEVER_GUIDANCE, TOOL_REGISTRY
 from app.tools.references import REFERENCE_TOOLS
 from app.tools.sheets import build_when_to_call_sheet
 
@@ -295,8 +295,11 @@ class AgentPipeline:
                     trace.finish("tools", "fallback", "confirmation_required")
                     trace.finish("evidence", "fallback", "not_used")
                     self._outcomes["tool_confirmation_required"] += 1
+                    answer = FORM_CONFIRMATION_DETAIL
+                    if any(result["key"] == "child_dose_check" for result in tool_results):
+                        answer = f"{INFANT_FEVER_GUIDANCE}.\n\n{answer}"
                     yield ("result", _empty_result(
-                        answer=FORM_CONFIRMATION_DETAIL,
+                        answer=answer,
                         tool_results=tool_results,
                         handoff=handoff("tool_confirmation_required", tool_results=tool_results),
                     ))

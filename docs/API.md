@@ -169,7 +169,7 @@ Calculator results include `tool`, `source`, `scope`, and a numeric score or val
 
 Every successful calculator result also echoes the validated `inputs` object (field name to value) so the handoff and the tool card can show exactly what was used.
 
-For `child_dose_check`, `ors_planner`, `peak_flow_zone`, and `hf_weight_zone`, chat returns a tool entry with `key`, `tool`, `source`, `scope`, `status: "confirmation_required"`, and an explanatory `error`. It carries no model-extracted inputs or computed values. The form submits the user's confirmed values to `POST /api/tools/{key}`.
+For `child_dose_check`, `ors_planner`, `peak_flow_zone`, and `hf_weight_zone`, chat returns a tool entry with `key`, `tool`, `source`, `scope`, `status: "confirmation_required"`, and an explanatory `error`. It carries no model-extracted inputs or computed values. For `child_dose_check`, the fixed reply includes the fever warning for babies under 3 months before linking to the form. The form submits the user's confirmed values to `POST /api/tools/{key}`.
 
 `pack_years` accepts `packs_per_day` (0.05 to 10) and `years_smoked` (0 to 100) and returns `value` (their product rounded to one decimal), `units: "pack-years"`, and a `recommendation` quoting the USPSTF lung cancer screening wording as a conversation starter; it does not decide eligibility. `waist_to_height` accepts `waist_cm` (40 to 250) and `height_cm` (100 to 250) and returns `value` (rounded to two decimals), `units: "ratio"`, and a `recommendation` quoting NICE NG246's wording; a waist at or above height is rejected as an input error. Both require explicit numbers and never estimate a missing one.
 

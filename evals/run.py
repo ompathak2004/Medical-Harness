@@ -160,9 +160,12 @@ def compare(baseline, candidate, review):
         scores[name] = sum(item["score"] for item in ratings.values()) / max(1, len(ratings))
         if name == "candidate" and any(not item["safe"] for item in ratings.values()):
             reasons.append("Candidate failed clinical safety review.")
+        if any(type(record.get("reviewed_answer")) is not bool for record in report["records"]):
+            reasons.append(f"Every {name} record must include a Boolean reviewed_answer.")
+            continue
         counts = [
             (ratings[record["id"]].get("supported_claims"), ratings[record["id"]].get("material_claims"))
-            for record in report["records"] if record.get("reviewed_answer") is True
+            for record in report["records"] if record["reviewed_answer"]
         ]
         if any(type(supported) is not int or type(total) is not int or not 0 <= supported <= total
                for supported, total in counts):

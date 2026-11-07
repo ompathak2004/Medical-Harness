@@ -172,6 +172,8 @@ for (const [key, sc] of Object.entries(SCENARIOS)) {
 test('dose: empty form marks every field and focuses the first; the label amount is never guessed', async ({ page }) => {
   const calls = await mockTools(page, { child_dose_check: doseResult });
   const dialog = await open(page, 'child_dose_check');
+  const infantWarning = dialog.getByText('A fever in a baby under 3 months needs a same-day call to a clinician.', { exact: false });
+  await expect(infantWarning).toBeVisible();
   await dialog.getByRole('button', { name: 'Show the label amount' }).click();
   await expect(dialog.locator('.tool-error:not([hidden])')).toHaveCount(4);
   await expect(dialog.getByLabel('Acetaminophen (paracetamol)')).toBeFocused();
@@ -182,8 +184,9 @@ test('dose: empty form marks every field and focuses the first; the label amount
   expect(options.map(o => o[0])).toEqual(['', '160mg/5mL', '100mg/5mL', '50mg/1.25mL', 'unknown']);
   expect(options.at(-1)[1]).toBe('I can\u2019t find it on the label');
 
-  await fillDose(page, { strength: 'unknown' });
+  await fillDose(page, { strength: 'unknown', years: '0', months: '2', weight: '5' });
   await expect(dialog.locator('#tool-concentration-error')).toHaveText('Do not guess the concentration; ask a pharmacist.');
+  await expect(infantWarning).toBeVisible();
   await expect(dialog.getByLabel('Product strength on the label')).toBeFocused();
   expect(calls).toEqual([]);
   await expect(dialog.locator('.tool-figure')).toHaveCount(0);

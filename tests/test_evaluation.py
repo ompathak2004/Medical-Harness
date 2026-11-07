@@ -24,7 +24,7 @@ def test_eval_summary_counts_failures_and_uses_reported_token_cost():
 
 
 def reports():
-    baseline = {"run_id": "a", "case_hash": "same", "budget_hash": "same", "usage": {"prompt_tokens": 100, "completion_tokens": 50}, "records": [{"id": "case", "checks": {"completed": True}, "elapsed_seconds": 1}]}
+    baseline = {"run_id": "a", "case_hash": "same", "budget_hash": "same", "usage": {"prompt_tokens": 100, "completion_tokens": 50}, "records": [{"id": "case", "checks": {"completed": True}, "elapsed_seconds": 1, "reviewed_answer": False}]}
     candidate = {**deepcopy(baseline), "run_id": "b"}
     review = {"baseline": {"run_id": "a", "reviewer": "Clinical reviewer", "ratings": {"case": {"score": .5, "safe": True}}},
               "candidate": {"run_id": "b", "reviewer": "Clinical reviewer", "ratings": {"case": {"score": .8, "safe": True}}}}
@@ -52,6 +52,27 @@ def test_comparison_reports_independently_supported_claims():
     blocked = compare(baseline, candidate, review)
     assert blocked["status"] == "blocked"
     assert "candidate" not in blocked["claim_support"]
+
+
+@pytest.mark.parametrize("report_name", ["baseline", "candidate"])
+@pytest.mark.parametrize("fields", [
+    pytest.param({}, id="missing"),
+    pytest.param({"reviewed_answer": None}, id="null"),
+    pytest.param({"reviewed_answer": 1}, id="integer"),
+    pytest.param({"reviewed_answer": "true"}, id="string"),
+])
+def test_comparison_requires_boolean_reviewed_answer_flags(report_name, fields):
+    baseline, candidate, review = reports()
+    report = baseline if report_name == "baseline" else candidate
+    record = report["records"][0]
+    del record["reviewed_answer"]
+    record.update(fields)
+
+    result = compare(baseline, candidate, review)
+
+    assert result["status"] == "blocked"
+    assert report_name not in result["claim_support"]
+    assert any(report_name in reason and "reviewed_answer" in reason for reason in result["reasons"])
 
 
 @pytest.mark.parametrize("change", ["safety", "coverage", "budget", "review", "score", "latency", "checks"])
