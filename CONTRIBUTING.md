@@ -31,6 +31,7 @@ Commit rebuilt `static/dist/` and `static/build.json` with browser source change
 
 - Keep each pull request focused and explain what changed, why, and how you checked it.
 - Include screenshots for visible UI changes. Use synthetic example questions and redact personal information.
+- To update the published screenshots, set `UPDATE_DOC_SCREENSHOTS=1` and use Playwright's `--grep` to capture the changed views.
 - Update relevant documentation when behavior, configuration, or API contracts change.
 - Run `uv run pytest -q` before opening the request.
 

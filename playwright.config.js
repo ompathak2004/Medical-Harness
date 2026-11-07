@@ -16,6 +16,6 @@ export default defineConfig({
     command: process.env.TEST_SERVER_COMMAND || `uv run uvicorn app.main:app --host 127.0.0.1 --port ${port} --no-access-log`,
     url: `http://127.0.0.1:${port}/api/health`,
     reuseExistingServer: false,
-    env: { CEREBRAS_API_KEY: 'browser-test-key', MEDISEARCH_API_KEY: 'browser-test-key' },
+    env: { CEREBRAS_API_KEY: 'browser-test-key', MEDISEARCH_API_KEY: 'browser-test-key', OTEL_EXPORTER_OTLP_ENDPOINT: '' },
   },
 });

@@ -2,7 +2,7 @@
 
 Ask a health question and get an evidence-grounded answer with source articles. medical-harness combines a FastAPI agent, clinical calculators, and an interactive 3D anatomy viewer in a single web application.
 
-[How it works](docs/ARCHITECTURE.md) · [Tools and reliability](docs/RELIABILITY.md) · [Evaluation loop](docs/EVALUATION.md) · [Research decisions](docs/RESEARCH.md)
+[How it works](docs/ARCHITECTURE.md) · [Tools and reliability](docs/RELIABILITY.md) · [Operator traces](docs/OBSERVABILITY.md) · [Evaluation loop](docs/EVALUATION.md) · [Research decisions](docs/RESEARCH.md)
 
 > medical-harness provides educational information, not a diagnosis or a substitute for a clinician. For emergencies, contact local emergency services.
 
@@ -21,7 +21,7 @@ Ask a health question and get an evidence-grounded answer with source articles. 
 - See how an answer was made: a collapsible panel lists each step, its status, and which retrieved sources the answer cited. This is coverage, not verification of each claim.
 - Read official US label sections (boxed warning, indications, contraindications, warnings, adverse reactions) for a named medicine, and calculate pack-years and waist-to-height ratio from numbers you supply.
 - Calculate non-HDL cholesterol from total and HDL values on the same lipid panel, in matching mg/dL or mmol/L units, without assigning a risk category.
-- Use patient tools from the **Tools** panel, or let the assistant pick one when you give it explicit numbers. Each shows its source and scope, echoes your inputs, can be printed, and can be added to the clinician handoff:
+- Use patient tools from the **Tools** panel. Chat can suggest a tool. For child fever medicine, oral rehydration, peak flow, and heart-failure weight changes, enter and confirm the values in the form. Each tool shows its source and scope, echoes your inputs, can be printed, and can be added to the clinician handoff:
   - Children: a fever-medicine label lookup (`child_dose_check`: the amount printed on the AAP/FDA label for the child's weight band, with age hard stops and the 24-hour limit; not a personalised dose), growth percentiles on a drawn curve (`growth_percentile`, `child_bmi_percentile`; WHO 0 to 24 months, CDC 2 to 20 years), and an oral rehydration planner (`ors_planner`).
   - Adults: a lab result reader that places your value on the range printed on your own report and converts units (`lab_result_reader`), a seven-day home blood-pressure log (`bp_log_summary`), a glucose log pattern view (`glucose_log_pattern`) with the A1c line on `estimated_glucose`, peak-flow and heart-failure weight zones (`peak_flow_zone`, `hf_weight_zone`).
   - Older adults and caregivers: a printable medication schedule that flags the same active ingredient listed twice (`medication_schedule`, with NLM RxNorm; not an interaction check), the CDC STEADI 12-item fall-risk checklist (`steadi_fall_risk`), and a printable when-to-call sheet for after a hospital visit.
@@ -119,7 +119,7 @@ Node 22+ is needed only to change or test the frontend. Self-hosted bundles and 
 
 ## Deploy
 
-The app can run as one FastAPI Function on Vercel. Import this repository, keep the root directory at the repository root, and add `CEREBRAS_API_KEY` and `MEDISEARCH_API_KEY` in **Project Settings → Environment Variables** before deploying. The checked-in `vercel.json` sets a 180-second function limit. You can also deploy with `vercel deploy --prod` after linking a project.
+The app runs as one FastAPI Function on Vercel. Use the [Deploy workflow](docs/DEPLOYMENT.md#deployment-from-github-actions) for previews and production. It verifies CI, the deployed revision, and a synthetic calculator before promotion.
 
 Docker and DigitalOcean deployment notes are in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). Environment variable details are in [docs/CONFIGURATION.md](docs/CONFIGURATION.md). The in-memory cache and rate limiter are local to each process or Vercel Function instance.
 

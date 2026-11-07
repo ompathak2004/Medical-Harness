@@ -27,7 +27,7 @@ Emergency triage precedes all tools. The planner selects at most two relevant to
 | Growth percentile | Sex, age, measurement → WHO or CDC percentile and curve | Bundled tables verified by hash before use; refuses head circumference from 24 months; not a diagnosis |
 | Child BMI percentile | Sex, age, weight, height → CDC BMI-for-age percentile | Ages 2 to 20; not a weight category |
 | STEADI fall-risk checklist | Twelve explicit answers → score and CDC wording | All items required; not an assessment |
-| Home blood-pressure log | Readings → seated morning and evening averages, ACC/AHA band for discussion, standing-drop flag | Alert for any reading above 180/120; no target or diagnosis |
+| Home blood-pressure log | Readings → seated morning and evening averages, ACC/AHA band for discussion, standing-drop flag | Alert for any reading above 180/120, with repeat-reading and emergency guidance from the [American Heart Association](https://www.heart.org/en/health-topics/high-blood-pressure/understanding-blood-pressure-readings/when-to-call-911-for-high-blood-pressure); no target or diagnosis |
 | Glucose log pattern | Readings → time-of-day grid against ADA general goals | Alerts below 70 and above 250 mg/dL; no insulin or dose advice |
 | Medication schedule | Medicine list → morning, noon, evening, bedtime grid and shared-ingredient flag | RxNorm names only; not an interaction check or dosing advice; works without RxNorm using typed names |
 | Anatomy | Spatially useful question → reference scene | No patient findings, diagnosis or inferred laterality |

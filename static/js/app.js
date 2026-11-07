@@ -148,7 +148,9 @@ function renderToolCard(tr, msgId) {
   const tone = riskTone(tr);
   const [headlineKey, headlineValue, headlineLabel] = toolHeadline(tr);
   const catalogued = toolFor(tr.key);
-  if (catalogued) { if (!messageTools.has(msgId)) messageTools.set(msgId, new Map()); messageTools.get(msgId).set(tr.key, tr); }
+  const confirm = tr.status === 'confirmation_required';
+  if (catalogued && !confirm) { if (!messageTools.has(msgId)) messageTools.set(msgId, new Map()); messageTools.get(msgId).set(tr.key, tr); }
+  const launch = confirm || ((tr.error || tr.missing_inputs?.length) && !tr.hard_stop) ? 'Open the tool to complete it' : catalogued?.launch;
   const rows = toolCardRows(tr, headlineKey);
   const riskValue = tr.risk || tr.category;
 
@@ -180,8 +182,8 @@ function renderToolCard(tr, msgId) {
       ${(tr.alerts || []).map(a => `<div class="tool-card-recommendation tool-card-alert">${escapeHtml(a.text)}</div>`).join('')}
       ${tr.recommendation ? `<div class="tool-card-recommendation">${escapeHtml(tr.recommendation)}</div>` : ''}
       ${safeUrl(tr.source) ? `<a class="tool-source" href="${escapeAttr(safeUrl(tr.source))}" target="_blank" rel="noopener noreferrer">Calculator reference ↗</a>` : ''}
-      ${tr.error ? `<div class="tool-card-recommendation">${escapeHtml(tr.error)}</div>` : ''}
-      ${catalogued ? `<button type="button" class="visual-launch tool-launch" data-action="open-tool" data-tool="${escapeAttr(tr.key)}" data-msg-id="${escapeAttr(msgId)}">${svg(ICON.layoutGrid)}<span><strong>${escapeHtml((tr.error || tr.missing_inputs?.length) && !tr.hard_stop ? 'Open the tool to complete it' : catalogued.launch)}</strong></span>${svg(ICON.arrowRight)}</button>` : ''}
+      ${tr.error && !confirm ? `<div class="tool-card-recommendation">${escapeHtml(tr.error)}</div>` : ''}
+      ${catalogued ? `<button type="button" class="visual-launch tool-launch" data-action="open-tool" data-tool="${escapeAttr(tr.key)}" data-msg-id="${escapeAttr(msgId)}">${svg(ICON.layoutGrid)}<span><strong>${escapeHtml(launch)}</strong></span>${svg(ICON.arrowRight)}</button>` : ''}
     </div>
   </div>`;
 }
@@ -278,7 +280,10 @@ function finalizeAnswer(wrap, data, msgId) {
   const guide = data.type === 'answer' && educationFor(data.visual_context);
   if (guide) html += `<button type="button" class="visual-launch" data-action="open-education" data-guide="${escapeAttr(data.visual_context)}">${svg(data.visual_context === 'eye_pressure' ? ICON.eye : ICON.layers)}<span><strong>${escapeHtml(guide.launch)}</strong><small>${escapeHtml(guide.subtitle)}</small></span>${svg(ICON.arrowRight)}</button>`;
   html += `<div class="answer-body">${renderAnswerBody(data.answer || '', currentArticles, msgId)}</div>`;
-  if (data.tool_results?.length) html += `<div class="answer-tools"><div class="section-eyebrow">Tools used</div>${data.tool_results.map(tr => renderToolCard(tr, msgId)).join('')}</div>`;
+  if (data.tool_results?.length) {
+    const label = data.handoff?.reason === 'tool_confirmation_required' ? 'Open a tool' : 'Tools used';
+    html += `<div class="answer-tools"><div class="section-eyebrow">${label}</div>${data.tool_results.map(tr => renderToolCard(tr, msgId)).join('')}</div>`;
+  }
   html += renderSourcesGrid(currentArticles, msgId);
   html += renderTraceSection(data.handoff);
   if (data.anatomy_context) html += anatomyToggleButtonHtml(data.anatomy_context, msgId);

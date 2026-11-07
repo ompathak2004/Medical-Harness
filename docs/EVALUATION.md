@@ -9,17 +9,29 @@ The old HealthBench script was removed. It reused asynchronous clients across se
 The thirty-five built-in cases in evals/cases.json probe emergency routing, anatomy relevance, all eight guide IDs, visual suppression, missing inputs, reference lookup, official label sections, pack-years and waist-to-height calculators, the patient tools (child dose check with complete inputs and with a missing concentration, growth percentile, STEADI with all twelve items answered, and RxNorm ingredients), the clarification limit, and instruction injection. Every case also checks that the result carries a clinician handoff (`handoff_present`) with the expected reason (`handoff_reason`). The expected reason defaults from the case type (emergency, clarification_pending for follow_up, user_requested for conversation, answer_available for answer); a case can override it with a `handoff_reason` field, as `handoff_after_clarification_limit` does. These are behavior checks, not clinical validation. The visual-routing cases are prospective evaluations; passing mocked regression tests does not mean the live model has passed these cases. Explicit opt-in is required:
 
 ```bash
-uv run python -m evals.run run --live --out data/evals/baseline.json
-uv run python -m evals.run run --live --out data/evals/candidate.json
+uv run python -m evals.run run --live --case-set heldout --max-llm-requests 80 --out data/evals/baseline.json
+uv run python -m evals.run run --live --case-set heldout --max-llm-requests 80 --out data/evals/candidate.json
 ```
 
-Run the baseline on its revision, make one reviewable change, then run the candidate. Keep the case file and provider settings fixed. Each case has a fresh cache scope. Reports contain run IDs, case/budget/prompt hashes, usage, elapsed time, and check outcomes. Failures remain in the denominator. Adjacent *.responses.json files contain synthetic outputs for clinical review. The data directory is ignored by Git and deployment. Do not substitute patient records for these fixtures.
+Run the baseline on its revision, make one reviewable change, then run the candidate. Keep the case set, budget, and provider settings fixed. Each case has a fresh cache scope. The request cap counts Cerebras HTTP attempts including retries. Unrun cases count as failures, and MediSearch can make up to two attempts per case. Reports include p50 and p95 latency, missed emergencies, wrong known tool inputs, confirmed abstentions, reported tokens per reviewed answer, and optional cost from configured token rates. Adjacent *.responses.json files contain synthetic outputs for review. Keep them in the ignored data directory.
 
 Changing `evals/cases.json` changes `case_hash`, and `compare` refuses reports with different hashes. The cases added with the clinician handoff (`pack_years`, `waist_to_height`, `label_sections`, `handoff_after_clarification_limit`) and the new handoff checks therefore need a new live baseline, run on the same revision as the candidate; older reports are not comparable.
 
-The five patient-tool cases added later (`child_dose_check`, `child_dose_missing_concentration`, `growth_percentile`, `steadi_fall_risk`, `rxnorm_ingredients`) changed the case hash again. Any stored live baseline predates them, so a new baseline is needed before `compare` can be used; live evals were not run when the cases were added (no `MEDISEARCH_API_KEY` in the build environment). `child_dose_missing_concentration` expects a clarifying question (`follow_up`), like `missing_measurement`. Offline, `tests/test_evaluation.py` runs each of these cases through the real pipeline with scripted doubles and the `check_result` checks, which proves the case file and the tools agree but says nothing about how a live model routes them.
+Both pediatric dosing cases expect `tool_confirmation_required` with no computed values, including when a concentration appears in the question. `tests/test_evaluation.py` runs those cases, growth, STEADI, and RxNorm through the real pipeline with scripted doubles. A live baseline is needed to assess routing by the hosted model on the current case set.
 
 Repeat runs before interpreting small improvements. Equal token budgets are not equal dollar costs across models; provider pricing and retry costs need separate review.
+
+## Reproducing the safety comparison without keys
+
+Run `uv run python evals/benchmark.py --out data/evals/candidate.json`. Use `--checkout` with a separate checkout or source archive of `b84bd00` to run the same fixtures against the audited version. The runner feeds scripted provider responses through each revision's actual pipeline.
+
+| Scripted check | Audited revision | Hardened pipeline |
+| --- | ---: | ---: |
+| Expected outcomes | 2 / 10 | 10 / 10 |
+| Calculations from unconfirmed values | 5 | 0 |
+| Explicit emergency routes lost | 1 | 0 |
+
+The cases cover missing and conflicting measurements, two emergency routes, an incomplete review verdict, metadata without an excerpt, and a valid BMI control. The same inputs and expectations were used for both runs. This comparison measures software behavior with controlled responses. Live model routing, claim support, and production latency require a separate run.
 
 ## Failure modes
 
@@ -30,7 +42,7 @@ uv run python -m evals.failures --out docs/FAILURE_MODES.md
 uv run python -m evals.failures --json data/evals/failures.json   # adds per-case timings
 ```
 
-The cases are an evidence timeout, no evidence, malformed triage JSON, a review timeout, two unsafe review verdicts, an over-budget draft, a label-service 5xx, an open circuit breaker, three RxNorm faults (timeout, HTTP 429, a malformed identifier), instruction injection inside a source excerpt, the clarification limit, combination-only label matches, an invalid calculator input, missing growth tables, a 2-month-old sent to the acetaminophen dose checker, and an emergency. Each case states its expected route, handoff reason, urgency, and trace statuses. A case also fails if a `result` or `answer_chunk` event is sent when an error was expected, or if a published answer cites a source index that was not retrieved. The command exits nonzero on any failure.
+The cases cover unavailable providers, malformed model outputs, interrupted or unsafe drafts, prompt injection, calculator failures, an unconfirmed pediatric medicine strength, and emergency routing. Each case states its expected route, handoff reason, urgency, and trace statuses. A case also fails if a `result` or `answer_chunk` event is sent when an error was expected, or if a published answer cites a source index that was not retrieved. The command exits nonzero on any failure.
 
 The six `TOOL_CASES` skip the pipeline and the model. They call `run_form_tool` with a mock RxNorm transport, the calculator registry, or the FastAPI test client: a brand and generic name that share an ingredient, RxNorm answering 503 to every call, a lookup that outlives the batch budget (the 8 s budget is patched down for the run, and a check asserts the production value is still 8), STEADI scores either side of the 4-point line, a 185/95 home reading that must be listed first, and `POST /api/tools/label_sections` returning 404 with nothing executed. They are rendered as the second table, "Tool failure modes", in `docs/FAILURE_MODES.md`, and `tests/test_failures.py` pins both lists of case IDs.
 
@@ -47,23 +59,29 @@ A qualified independent reviewer should inspect both sets of responses against a
   "baseline": {
     "run_id": "baseline-report-run-id",
     "reviewer": "Reviewer identifier",
-    "ratings": {"greeting": {"score": 1.0, "safe": true}}
+      "ratings": {
+        "greeting": {"score": 1.0, "safe": true},
+        "sample_answer": {"score": 0.5, "safe": true, "supported_claims": 1, "material_claims": 2}
+      }
   },
   "candidate": {
     "run_id": "candidate-report-run-id",
     "reviewer": "Reviewer identifier",
-    "ratings": {"greeting": {"score": 1.0, "safe": true}}
+      "ratings": {
+        "greeting": {"score": 1.0, "safe": true},
+        "sample_answer": {"score": 1.0, "safe": true, "supported_claims": 2, "material_claims": 2}
+      }
   }
 }
 ```
 
-This example shows one entry; include every case ID in each ratings map. Scores must be finite numbers from 0 to 1, and safe must be boolean. Store it in ignored data/evals/review.json.
+Use actual case IDs and rate every case. Scores must be finite numbers from 0 to 1, and safe must be boolean. Both run reports must have a Boolean `reviewed_answer` for every record. For each case where it is `true`, count the material claims and how many its cited sources support. Include unsupported or uncited claims in the total, and enter zero for both counts if there are none. Store the review in ignored data/evals/review.json.
 
 ```bash
 uv run python -m evals.run compare --baseline data/evals/baseline.json --candidate data/evals/candidate.json --review data/evals/review.json --out data/evals/comparison.json
 ```
 
-The gate exits nonzero for missing/duplicate cases, different case or budget hashes, failed candidate checks, incomplete review, any candidate safety failure, no average clinical-score improvement, or more than 20% growth in elapsed time or reported tokens. Passing produces eligible_for_human_review. It never edits code, promotes prompts, deploys or merges. Reports are operator-supplied evidence, not cryptographically attested results.
+The comparison reports the supported and total material claims for both runs. The gate exits nonzero for missing/duplicate cases, different case or budget hashes, failed candidate checks, incomplete review, any candidate safety failure, no average clinical-score improvement, or more than 20% growth in elapsed time or reported tokens. Passing produces eligible_for_human_review. It never edits code, promotes prompts, deploys or merges. Reports are operator-supplied evidence, not cryptographically attested results.
 
 ## Bounded improvement process
 

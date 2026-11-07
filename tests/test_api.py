@@ -16,6 +16,7 @@ from app.pipeline import ReviewUnavailable
 from app.prompts import WHEN_TO_CALL_REQUEST
 from app.schemas import Handoff
 from app.tools.sheets import build_when_to_call_sheet
+from tests.test_pipeline import make_pipeline
 
 
 def minimal_handoff(reason="answer_available"):
@@ -301,6 +302,19 @@ def test_review_unavailable_returns_503_with_handoff(client):
     assert isinstance(event["detail"], str)
     assert event["handoff"]["reason"] == "review_unavailable"
     Handoff(**event["handoff"])
+
+
+def test_failed_emergency_screen_returns_fixed_guidance_on_both_routes(client):
+    client.app.state.pipeline = make_pipeline({"action": "invalid"})
+    response = client.post("/api/chat", json={"conversation": ["What is flu?"]})
+    assert response.status_code == 503
+    for error in (response.json(), sse_error(client)):
+        assert "contact your local emergency services now" in error["detail"]
+        handoff = Handoff(**error["handoff"])
+        assert handoff.reason == "triage_unavailable"
+        assert handoff.urgency == "unknown"
+        assert handoff.trace.steps[0].status == "failed"
+        assert "answer" not in error
 
 
 def test_error_without_pipeline_handoff_gets_route_built_one(client):

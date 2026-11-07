@@ -30,6 +30,12 @@ Settings are validated at startup. Invalid budgets, retry counts, or concurrency
 | `REQUEST_TIMEOUT_SECONDS` | `150` |
 | `MAX_CONCURRENT_REQUESTS` | `8` |
 | `METRICS_TOKEN` | `` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `` |
+| `OTEL_EXPORTER_OTLP_HEADERS` | `` |
+| `OTEL_TRACES_SAMPLER_ARG` | `0.1` |
+| `APP_RELEASE_SHA` | `` |
+| `CEREBRAS_INPUT_USD_PER_MILLION` | unset |
+| `CEREBRAS_OUTPUT_USD_PER_MILLION` | unset |
 | `MAX_CONVERSATION_MESSAGES` | `39` |
 | `MAX_MESSAGE_CHARS` | `8000` |
 | `MAX_CONVERSATION_CHARS` | `32000` |
@@ -43,6 +49,8 @@ The total request deadline covers all steps. Providers have shorter timeouts, co
 A zero cache capacity or TTL disables storage. Cached classifications and evidence contain sensitive derived text in process memory, are scoped to a random HTTP-only browser session, and expire. They are never written to disk. All-waiter cancellation also cancels the shared provider task; one cancelled waiter does not interrupt another. Completed answers are not cached. Cache and quota limits are per process, not global across Vercel instances.
 
 Set `METRICS_TOKEN` to expose aggregate token, cache, circuit and outcome metrics through authenticated `/api/metrics`. No patient text or API keys are included. Set `CORS_ORIGINS` only when a separate trusted frontend needs access. An empty value is suitable for the same-origin UI.
+
+An OTLP HTTP base endpoint enables sampled traces. Use HTTPS for a hosted collector. Set its authorization header in `OTEL_EXPORTER_OTLP_HEADERS`. `APP_RELEASE_SHA` sets the full Git SHA shown by the health endpoint and traces. See [observability](OBSERVABILITY.md) for free setup and cost estimates.
 
 `VERCEL_PREVIEW_FEEDBACK_ENABLED=0` is a Vercel platform setting for previews, not a Python application setting. It suppresses toolbar injection. Vercel sets `VERCEL=1` itself; do not set it on other hosts, where forwarded geographic headers are not trusted. The pinned `tzdata` dependency supplies IANA time-zone rules on Windows and minimal containers. Request context is documented in [API.md](API.md).
 

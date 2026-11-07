@@ -141,7 +141,7 @@ class TestReasons:
         Handoff(**h)
         assert (h["reason"], h["urgency"]) == ("review_unavailable", "routine")
         assert_trace(h, triage="ok", evidence="ok", draft="ok", review="failed")
-        assert h["trace"]["steps"][4]["detail"] == "attempts=2"
+        assert h["trace"]["steps"][4]["detail"] == "attempts=1"
         assert h["trace"]["claim_support"] is None
         assert all(not s["cited"] for s in h["sources"])
 

@@ -14,9 +14,10 @@ from app import __version__
 from app.config import get_settings
 from app.context import request_context, resolve_context, user_turn_times
 from app.handoff import build_handoff
-from app.pipeline import ReviewUnavailable, cache_scope
+from app.pipeline import ReviewUnavailable, TriageUnavailable, cache_scope
 from app.prompts import WHEN_TO_CALL_REQUEST
 from app.schemas import ChatRequest, ChatResponse, ToolRunRequest, ToolRunResponse
+from app.telemetry import operation, release_revision
 from app.tools.clinical import TOOL_REGISTRY
 from app.tools.forms import FORM_TOOLS, run_form_tool
 
@@ -68,13 +69,39 @@ def _validate_conversation(req: ChatRequest) -> None:
 
 
 REVIEW_UNAVAILABLE_DETAIL = "Unable to complete the answer review. Please try again."
+TRIAGE_UNAVAILABLE_DETAIL = (
+    "I couldn’t assess how urgent this may be. If this could be an emergency, contact your local emergency services now. "
+    "For other questions, please try again."
+)
 
 
 def _failure_handoff(req: ChatRequest, exc: BaseException | None = None) -> dict:
     """Handoff for an error payload: the pipeline's own when it set one, else nothing ran."""
     return getattr(exc, "handoff", None) or build_handoff(
-        _turns(req), "review_unavailable", None, triage_done=False
+        _turns(req), "triage_unavailable" if isinstance(exc, TriageUnavailable) else "review_unavailable",
+        None, triage_done=False,
     )
+
+
+def _failure_payload(req: ChatRequest, request: Request, exc: Exception) -> dict:
+    if isinstance(exc, TriageUnavailable):
+        outcome, detail = "triage_unavailable", TRIAGE_UNAVAILABLE_DETAIL
+    elif isinstance(exc, TimeoutError):
+        outcome, detail = "timeout", TRIAGE_UNAVAILABLE_DETAIL
+    elif isinstance(exc, ReviewUnavailable):
+        outcome, detail = "review_blocked", REVIEW_UNAVAILABLE_DETAIL
+    else:
+        outcome, detail = "error", "Unable to complete your answer safely. Please try again."
+    request.state.telemetry_outcome = outcome
+    return {"detail": detail, "handoff": _failure_handoff(req, exc)}
+
+
+def _result_outcome(result: dict) -> str:
+    if result.get("evidence_status") == "unavailable":
+        return "evidence_unavailable"
+    if (result.get("handoff") or {}).get("reason") == "tool_confirmation_required":
+        return "tool_confirmation_required"
+    return result["type"]
 
 
 def _sse(event: str, data: dict) -> str:
@@ -92,6 +119,7 @@ async def chat(req: ChatRequest, request: Request) -> ChatResponse:
     user_turn_times.set(req.user_turn_times)
     slots = request.app.state.request_slots
     if slots.locked():
+        request.state.telemetry_outcome = "busy"
         raise HTTPException(503, "The service is busy. Please try again shortly.", headers={"Retry-After": "10"})
     try:
         async with slots:
@@ -101,9 +129,11 @@ async def chat(req: ChatRequest, request: Request) -> ChatResponse:
     except (ReviewUnavailable, asyncio.TimeoutError) as exc:
         return JSONResponse(
             status_code=503,
-            content={"detail": REVIEW_UNAVAILABLE_DETAIL, "handoff": _failure_handoff(req, exc)},
+            content=_failure_payload(req, request, exc),
         )
-    return ChatResponse(conversation_id=conversation_id, request_context=context, **result)
+    response = ChatResponse(conversation_id=conversation_id, request_context=context, **result)
+    request.state.telemetry_outcome = _result_outcome(result)
+    return response
 
 
 @router.post("/chat/stream")
@@ -114,6 +144,7 @@ async def chat_stream(req: ChatRequest, request: Request) -> StreamingResponse:
 
     slots = request.app.state.request_slots
     if slots.locked():
+        request.state.telemetry_outcome = "busy"
         raise HTTPException(503, "The service is busy. Please try again shortly.", headers={"Retry-After": "10"})
 
     await slots.acquire()
@@ -137,6 +168,7 @@ async def chat_stream(req: ChatRequest, request: Request) -> StreamingResponse:
                     raise asyncio.TimeoutError
                 done, _ = await asyncio.wait({pending}, timeout=min(10, remaining))
                 if await request.is_disconnected():
+                    request.state.telemetry_outcome = "cancelled"
                     return
                 if not done:
                     yield ": keep-alive\n\n"
@@ -148,19 +180,21 @@ async def chat_stream(req: ChatRequest, request: Request) -> StreamingResponse:
                 pending = None
                 if event_type == "result":
                     data = ChatResponse(conversation_id=conversation_id, request_context=context, **data).model_dump(mode="json")
+                    request.state.telemetry_outcome = _result_outcome(data)
                 yield _sse(event_type, data)
+        except asyncio.CancelledError:
+            request.state.telemetry_outcome = "cancelled"
+            raise
         except Exception as exc:
-            logger.warning("chat_stream.failed")
-            yield _sse("error", {
-                "detail": "Unable to complete your answer safely. Please try again.",
-                "handoff": _failure_handoff(req, exc),
-            })
+            yield _sse("error", _failure_payload(req, request, exc))
         finally:
-            slots.release()
-            if pending is not None:
-                pending.cancel()
-                await asyncio.gather(pending, return_exceptions=True)
-            await stream.aclose()
+            try:
+                if pending is not None:
+                    pending.cancel()
+                    await asyncio.gather(pending, return_exceptions=True)
+                await stream.aclose()
+            finally:
+                slots.release()
 
     return StreamingResponse(
         event_generator(),
@@ -171,14 +205,14 @@ async def chat_stream(req: ChatRequest, request: Request) -> StreamingResponse:
 
 @router.get("/health")
 async def health() -> dict:
-    return {"status": "ok", "version": __version__}
+    return {"status": "ok", "version": __version__, "revision": release_revision(get_settings())}
 
 
 @router.get("/metrics")
 async def metrics(request: Request) -> dict:
 
     token = get_settings().metrics_token
-    if not token or not secrets.compare_digest(request.headers.get("authorization", ""), f"Bearer {token}"):
+    if not token or not secrets.compare_digest(request.headers.get("authorization", "").encode(), f"Bearer {token}".encode()):
         raise HTTPException(404, "Not found")
     pipeline = request.app.state.pipeline
     llm = getattr(request.app.state, "llm", None) or pipeline.llm
@@ -200,12 +234,15 @@ async def list_tools() -> dict:
 
 @router.post("/tools/{key}", response_model=ToolRunResponse)
 async def run_tool(key: str, body: ToolRunRequest, request: Request) -> ToolRunResponse:
-    if key in FORM_TOOLS:
-        result = await run_form_tool(key, body.inputs, getattr(request.app.state.pipeline, "references", None))
-    elif key in TOOL_REGISTRY:
-        result = TOOL_REGISTRY[key]["function"](body.inputs)
-    else:
+    if key not in FORM_TOOLS and key not in TOOL_REGISTRY:
         raise HTTPException(404, "Unknown tool.")
-    outcome = "unavailable" if result.get("status") == "unavailable" else "error" if "error" in result else "ok"
+    with operation("tool.execute", {"tool.name": key}) as span:
+        if key in FORM_TOOLS:
+            result = await run_form_tool(key, body.inputs, getattr(request.app.state.pipeline, "references", None))
+        else:
+            result = TOOL_REGISTRY[key]["function"](body.inputs)
+        outcome = "unavailable" if result.get("status") == "unavailable" else "error" if "error" in result else "ok"
+        span.set_attribute("medical_harness.outcome", outcome)
+    request.state.telemetry_outcome = f"tool_{outcome}"
     logger.info("tool run tool_key=%s outcome=%s", key, outcome)
     return ToolRunResponse(tool_key=key, result=result)

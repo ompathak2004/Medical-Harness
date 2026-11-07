@@ -257,15 +257,19 @@ def build_growth_table_missing() -> Scenario:
                      cleanup=lambda: setattr(growth, "load_tables", original))
 
 
-def build_dose_out_of_range() -> Scenario:
+def build_dose_concentration_unconfirmed() -> Scenario:
     def checks(run: Run) -> dict[str, bool]:
         tool = next((r for r in run.result["tool_results"] if "items" not in r), {})
         return {
-            **_calc_without_values(run, ("amount_ml", "amount_mg", "summary", "syringe", "band_low_lb", "interval_hours_low")),
-            "under_three_months_stop": tool.get("hard_stop", {}).get("title") == "Baby under 3 months" and tool.get("hard_stop", {}).get("urgent") is True,
-            "same_day_call_wording": "same-day call" in (tool.get("error") or ""),
+            "requires_confirmation": tool.get("status") == "confirmation_required",
+            "infant_warning_before_confirmation": (run.result.get("answer") or "").startswith(
+                "A fever in a baby under 3 months needs a same-day call to a clinician."
+            ),
+            "no_model_values": set(tool) == {"key", "tool", "source", "scope", "status", "error"},
+            "no_draft": not run.scenario.llm.streams,
+            "no_handoff_amount": run.handoff["calculations"][0]["result"] == "",
         }
-    return _scenario({"action": "answer"}, ["How much children's acetaminophen can my 2 month old have? She weighs 5 kg and the bottle says 160 mg/5 mL."],
+    return _scenario({"action": "answer"}, ["What label amount applies to my 2-month-old who weighs 5 kg? I do not know the acetaminophen concentration."],
                      tools={"selected_tools": ["child_dose_check"]},
                      extract={"medicine": "acetaminophen", "concentration": "160mg/5mL", "weight": 5, "weight_units": "kg", "age_months": 2},
                      checks=checks)
@@ -350,12 +354,12 @@ FAULT_CASES: list[dict] = [
           {**ANSWER_STEPS, "tools": "skipped", "evidence": "failed:empty", "draft": "skipped", "review": "skipped"},
           "Same fixed reply as a timeout; the absence of sources is stated, not hidden."),
     _case("triage_malformed_json", "The triage model returns text that is not JSON.", build_triage_malformed_json,
-          "error:ReviewUnavailable", "review_unavailable", "unknown",
+          "error:TriageUnavailable", "triage_unavailable", "unknown",
           {"triage": "failed:invalid_json", "tools": "skipped", "evidence": "skipped", "draft": "skipped", "review": "skipped"},
           "Fails closed with urgency `unknown`; no retrieval, tools, or answer after a failed emergency screen."),
     _case("review_timeout", "The safety review call times out.", build_review_timeout,
           "error:ReviewUnavailable", "review_unavailable", "routine",
-          {**ANSWER_STEPS, "tools": "skipped", "review": "failed:attempts=2"},
+          {**ANSWER_STEPS, "tools": "skipped", "review": "failed:attempts=1"},
           "The drafted answer is discarded; no `answer_chunk` or `result` event is sent."),
     _case("review_unsafe_twice", "The reviewer marks the draft unsafe, then marks its revision unsafe.", build_review_unsafe_twice,
           "error:ReviewUnavailable", "review_unavailable", "routine",
@@ -385,9 +389,10 @@ FAULT_CASES: list[dict] = [
     _case("growth_table_missing", "The bundled growth reference tables cannot be loaded.", build_growth_table_missing,
           "answer", "tool_input_missing", "routine", {**ANSWER_STEPS, "tools": "fallback:partial"},
           "The percentile tool returns its unavailable message and no number or curve; the handoff states that no value was computed."),
-    _case("dose_out_of_range", "The dose checker receives a 2-month-old for acetaminophen.", build_dose_out_of_range,
-          "answer", "tool_input_missing", "routine", {**ANSWER_STEPS, "tools": "fallback:partial"},
-          "The tool returns the under-3-months hard stop (same-day call) and no mL, mg, or band fields; the handoff states that no value was computed."),
+    _case("dose_concentration_unconfirmed", "The user asks about a 2-month-old without knowing the bottle strength; a scripted extractor would supply one.",
+          build_dose_concentration_unconfirmed, "answer", "tool_confirmation_required", "routine",
+          {"triage": "ok", "tools": "fallback:confirmation_required", "evidence": "fallback:not_used", "draft": "skipped", "review": "skipped"},
+          "The response shows the fixed infant fever warning before offering an empty tool form. No dose is computed and no strength is inferred."),
     _case("source_excerpt_injection", "A source excerpt contains instruction-injection text.", build_source_excerpt_injection,
           "answer", "answer_available", "routine", ANSWER_STEPS,
           "The text reaches the model only inside a user-role evidence block; it is absent from every system prompt, the answer, and the handoff."),

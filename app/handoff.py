@@ -15,7 +15,8 @@ TRACE_STEPS = ("triage", "tools", "evidence", "draft", "review")
 # Fixed vocabulary for TraceStep.detail. Never provider or user text.
 TRACE_DETAILS = frozenset({
     "", "invalid_json", "unavailable", "selected=1", "selected=2", "partial", "selection_failed",
-    "empty", "error", "reference_sources", "over_budget", "interrupted", "attempts=2", "revised_once",
+    "empty", "error", "reference_sources", "over_budget", "interrupted", "attempts=1", "attempts=2", "revised_once",
+    "confirmation_required", "not_used",
 })
 
 ASK_ME_3 = ("What is my main problem?", "What do I need to do?", "Why is it important?")
@@ -42,6 +43,11 @@ HANDOFF_TEMPLATES: dict[str, tuple[str, str, str]] = {
         "What should I do next, given that I have no sourced information yet?",
         "What would change if I waited, and what signs mean I should not wait?",
     ),
+    "triage_unavailable": (
+        "The app could not assess how urgent my question was. Can you help me with it?",
+        "What should I do about these symptoms?",
+        "What signs mean I need emergency care?",
+    ),
     "review_unavailable": (
         "The app could not finish its safety review, so it showed me no answer. Can you help me with my question?",
         "What should I do next, given that I have no reviewed information yet?",
@@ -56,6 +62,11 @@ HANDOFF_TEMPLATES: dict[str, tuple[str, str, str]] = {
         "A calculator needed measurements the app did not have, so it computed no value. Can we take or confirm them?",
         "Which measurements or tests do I need, and what should I do next?",
         "Why do these numbers matter for my situation?",
+    ),
+    "tool_confirmation_required": (
+        "The app asked me to enter the values in a form before calculating. Can you help me verify those values?",
+        "What should I do while I confirm the information?",
+        "What signs mean I should seek help sooner?",
     ),
     "answer_available": (
         "I read a sourced explanation about my question; is it relevant to me?",
@@ -72,8 +83,10 @@ LIMITATION_GENERAL = "This is general information from an automated tool, not a 
 LIMITATION_SCREEN = "Emergency screen only: 'not flagged' is not a triage category."
 LIMITATION_BY_REASON = {
     "evidence_unavailable": "No medical sources were retrieved, so no answer was written.",
+    "triage_unavailable": "The emergency screen could not be completed. If this could be an emergency, contact your local emergency services now.",
     "review_unavailable": "The answer did not pass the safety review or the review did not complete; nothing was shown.",
     "clarification_limit": "The app asked its one round of clarifying questions; remaining gaps were not resolved.",
+    "tool_confirmation_required": "The tool needs values you confirm in its form. No value was computed.",
 }
 LIMITATION_PENDING = "The app asked these questions and has not answered yet: {questions}"
 LIMITATION_UNREACHABLE = "{tool} could not be reached; this says nothing about the medicine."
@@ -239,7 +252,7 @@ def build_handoff(
         if result.get("tool") == "RxNorm ingredients" and result.get("status") != "unavailable" and LIMITATION_RXNORM not in limitations:
             limitations.append(LIMITATION_RXNORM)
     for calc in calculations:
-        if calc["error"] or calc["missing_inputs"]:
+        if reason != "tool_confirmation_required" and (calc["error"] or calc["missing_inputs"]):
             limitations.append(LIMITATION_CALC_INPUTS.format(tool=calc["tool"]))
     if support and support["uncited_sources"]:
         limitations.append(LIMITATION_UNCITED.format(sources=", ".join(map(str, support["uncited_sources"]))))
@@ -251,7 +264,7 @@ def build_handoff(
 
     if reason == "emergency":
         urgency = "emergency"
-    elif reason == "review_unavailable" and not triage_done:
+    elif reason in {"triage_unavailable", "review_unavailable"} and not triage_done:
         urgency = "unknown"
     else:
         urgency = "routine"

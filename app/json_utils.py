@@ -14,15 +14,18 @@ def _unique_object(pairs):
     return result
 
 
-def parse_json_response(text):
+def parse_json_response(text, *, whole_object=False):
     if not isinstance(text, str) or len(text) > 64000:
         raise ValueError("Invalid JSON response size")
-    start = text.find("{")
-    if start < 0:
-        raise ValueError("No JSON object found in LLM response")
     decoder = json.JSONDecoder(parse_constant=_reject_constant, object_pairs_hook=_unique_object)
     try:
-        result, _ = decoder.raw_decode(text[start:])
+        if whole_object:
+            result = decoder.decode(text)
+        else:
+            start = text.find("{")
+            if start < 0:
+                raise ValueError("No JSON object found in LLM response")
+            result, _ = decoder.raw_decode(text[start:])
     except (json.JSONDecodeError, RecursionError) as exc:
         raise ValueError("Invalid JSON object") from exc
     if not isinstance(result, dict):

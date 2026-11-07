@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
+import { docScreenshot, clipboardText } from './fixtures.js';
 
 // The five log and reading tools. POST /api/tools/{key} is mocked with synthetic fixtures that mirror the
 // backend result shapes (docs/API.md), except the last block, which runs against the real backend.
@@ -50,7 +51,7 @@ const BP_BANDS = [
   { label: 'Normal', sbp_low: 0, sbp_high: 119, dbp_low: 0, dbp_high: 79 }, { label: 'Elevated', sbp_low: 120, sbp_high: 129, dbp_low: 0, dbp_high: 79 },
   { label: 'Stage 1', sbp_low: 130, sbp_high: 139, dbp_low: 80, dbp_high: 89 }, { label: 'Stage 2', sbp_low: 140, sbp_high: 300, dbp_low: 90, dbp_high: 200 },
 ];
-const BP_ALERT = 'A reading above 180/120 mmHg: AHA says that if you also have chest pain, shortness of breath, back pain, numbness or weakness, a change in vision, or difficulty speaking, call emergency services. Otherwise wait five minutes, check again, and contact your clinician if it is still above 180/120.';
+const BP_ALERT = 'A reading above 180/120 mmHg: AHA says that if you also have chest pain, shortness of breath, back pain, numbness or weakness, a change in vision, or difficulty speaking, call emergency services now. Otherwise wait at least one minute, check again, and contact your clinician as soon as possible if it is still above 180/120.';
 const bpResult = (extra = {}) => ({
   tool: 'Home blood-pressure log', key: 'bp_log_summary', source: 'https://doi.org/10.1161/HYP.0000000000000065', scope: 'Adults.',
   inputs: { readings: [] }, alerts: [{ level: 'emergency', text: BP_ALERT }],
@@ -240,7 +241,7 @@ test('bp: the result shows the alert first, two band bars with AM, PM and 7-day 
   expect(await outsideViewBox(dialog)).toEqual([]);
 
   await dialog.getByRole('button', { name: 'Copy' }).click();
-  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  const copied = await clipboardText(page);
   expect(copied).toContain('EMERGENCY: A reading above 180/120 mmHg');
   expect(copied).toContain('Result: 7-day average 139/85 from 10 readings, in the Stage 1 band.');
   expect(copied).toContain('Morning average: 140.6/84.9 mmHg (7 readings)');
@@ -537,7 +538,7 @@ test('glucose: the pattern chart has the ADA bands, tag shapes, a legend and a g
   await expect(result.locator('.tool-cannot')).toContainText('Not for insulin or medicine dosing');
   expect(await outsideViewBox(dialog)).toEqual([]);
   await dialog.getByRole('button', { name: 'Copy' }).click();
-  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  const copied = await clipboardText(page);
   expect(copied).toContain('EMERGENCY: A reading below 54 mg/dL');
   expect(copied).toContain('CALL TODAY: A reading above 250');
   expect(copied).toContain('Fasting: 2 readings, mean 130, lowest 118, highest 142 mg/dL, 50 % in target');
@@ -627,7 +628,7 @@ test('lab: the request body maps both range shapes and the result draws the prin
   await expect(result.getByRole('link', { name: /Unit sources/ })).toHaveAttribute('href', 'https://www.nist.gov/pml/special-publication-811');
   expect(await outsideViewBox(dialog)).toEqual([]);
   await dialog.getByRole('button', { name: 'Copy' }).click();
-  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  const copied = await clipboardText(page);
   expect(copied).toContain('Result: HbA1c: 7.4 %. Above the range printed on the report (4\u20135.6 %).');
   expect(copied).toContain('In other units: 57 mmol/mol; printed range 20\u201338 mmol/mol');
   expect(copied).toContain("'H': 'H' is the laboratory's flag");
@@ -727,7 +728,7 @@ test('peak flow: the gauge shows the zones from the backend, the reading marker,
   await expect(result.locator('.tool-caution')).toContainText('Emergency. Red zone in the NHLBI Asthma Action Plan');
   await expect(result.locator('.tool-summary')).toHaveText('150 L/min is 37 % of your personal best 400: Red zone.');
   await dialog.getByRole('button', { name: 'Copy' }).click();
-  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  const copied = await clipboardText(page);
   expect(copied).toContain('EMERGENCY: Red zone in the NHLBI Asthma Action Plan');
   expect(copied).toContain('Result: 150 L/min is 37 % of your personal best 400: Red zone.');
   expect(copied).toContain('Zones: Red: 0\u2013199 L/min (0\u201349 %); Yellow: 200\u2013319 L/min (50\u201379 %); Green: 320\u2013400 L/min (80\u2013100 %)');
@@ -805,7 +806,7 @@ test('hf weight: the sparkline plots the logged weights, labels the backend chan
   await expect(result.locator('.tool-cannot')).toContainText("your own action plan's numbers come first");
   expect(await outsideViewBox(dialog)).toEqual([]);
   await dialog.getByRole('button', { name: 'Copy' }).click();
-  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  const copied = await clipboardText(page);
   expect(copied).toContain('CALL TODAY: Your weight gain reached the AHA threshold');
   expect(copied).toContain('Result: Today 82.4 kg: up 1.4 kg since yesterday.');
   expect(copied).toContain('Threshold for a day: a gain of 2 lb (0.9 kg)');
@@ -899,7 +900,7 @@ for (const key of KEYS) {
         if ((size === 'desktop' && theme === 'light') || (size === 'mobile' && theme === 'dark')) {
           await dialog.locator('.tool-figure').first().scrollIntoViewIfNeeded();
           await dialog.evaluate(el => { el.scrollTop = Math.max(0, el.querySelector('.tool-figure').getBoundingClientRect().top - el.querySelector('.tool-header').getBoundingClientRect().bottom + el.scrollTop - 12); });
-          await page.screenshot({ path: `docs/media/tool-${key}-${size}-${theme}.png` });
+          await docScreenshot(page, { path: `docs/media/tool-${key}-${size}-${theme}.png` });
         }
         await page.keyboard.press('Escape');
         expect(errors).toEqual([]);

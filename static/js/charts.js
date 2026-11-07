@@ -10,7 +10,7 @@ import { escapeHtml as esc } from './dom-utils.js';
  */
 
 const W = 520;
-const CH = 11.5;
+const CH = 12.5;
 let serial = 0;
 
 export const uid = prefix => `${prefix}-${++serial}`;

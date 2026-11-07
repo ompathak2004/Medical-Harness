@@ -284,7 +284,8 @@ def dose_stop(title, text, urgent=False):
     return ToolError(text, hard_stop={"title": title, "text": text, "urgent": urgent})
 
 
-INFANT_STOP = ("Baby under 3 months", "A fever in a baby under 3 months needs a same-day call to a clinician; this tool shows no amount.")
+INFANT_FEVER_GUIDANCE = "A fever in a baby under 3 months needs a same-day call to a clinician"
+INFANT_STOP = ("Baby under 3 months", f"{INFANT_FEVER_GUIDANCE}; this tool shows no amount.")
 IBUPROFEN_STOP = ("Baby under 6 months", "Ibuprofen is not for babies under 6 months unless a clinician directs it; no amount shown.")
 
 

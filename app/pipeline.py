@@ -7,7 +7,10 @@ import inspect
 from contextvars import ContextVar
 from collections import Counter
 from collections.abc import AsyncIterator
-from typing import Literal
+from contextlib import aclosing
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, ConfigDict, StringConstraints, model_validator
 
 from app.cache import TTLCache, text_key
 from app.answer_format import remove_source_appendix
@@ -31,9 +34,10 @@ from app.prompts import (
     VARIABLE_EXTRACTION_USER,
     WHEN_TO_CALL_SYSTEM,
 )
+from app.telemetry import operation
 from app.tools.anatomy import select_anatomy
 from app.tools.education import select_visual
-from app.tools.clinical import TOOL_REGISTRY
+from app.tools.clinical import INFANT_FEVER_GUIDANCE, TOOL_REGISTRY
 from app.tools.references import REFERENCE_TOOLS
 from app.tools.sheets import build_when_to_call_sheet
 
@@ -43,10 +47,37 @@ CLARIFICATION_INTRO = (
     "A few details will help me understand your question. "
     "You can write ‘not sure’ for anything you do not know."
 )
+FORM_CONFIRMATION_TOOLS = frozenset({"child_dose_check", "ors_planner", "peak_flow_zone", "hf_weight_zone"})
+FORM_CONFIRMATION_DETAIL = "Open the tool and confirm the values yourself before calculating a result."
 
 
 class ReviewUnavailable(RuntimeError):
     handoff: dict | None = None
+
+
+class TriageUnavailable(ReviewUnavailable):
+    pass
+
+
+class _SafetyVerdict(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    is_safe: bool
+    issues: list[Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]]
+    revised_answer: str
+
+    @model_validator(mode="after")
+    def consistent_verdict(self):
+        if self.is_safe and (self.issues or self.revised_answer.strip()):
+            raise ValueError("An approved answer cannot have issues or a revision")
+        if not self.is_safe and not self.issues:
+            raise ValueError("A rejected answer must have issues")
+        return self
+
+
+def _has_excerpt(article: dict) -> bool:
+    excerpt = article.get("tldr")
+    return isinstance(excerpt, str) and bool(excerpt.strip())
 
 
 class _RunTrace:
@@ -67,10 +98,11 @@ class _RunTrace:
     async def timed(self, name: str, awaitable):
         """Await `awaitable` with the step clock running, whatever the outcome."""
         self.start(name)
-        try:
-            return await awaitable
-        finally:
-            self.stop(name)
+        with operation(f"pipeline.{name}"):
+            try:
+                return await awaitable
+            finally:
+                self.stop(name)
 
     def finish(self, name: str, status: str, detail: str = "") -> None:
         if detail not in TRACE_DETAILS:
@@ -184,8 +216,10 @@ class AgentPipeline:
             trace.start("triage")
             triage_info: dict = {}
             try:
-                triage = await self._triage(conv_text, triage_info)
-            except ReviewUnavailable:
+                with operation("pipeline.triage") as span:
+                    triage = await self._triage(conv_text, triage_info)
+                    span.set_attribute("medical_harness.outcome", triage["action"])
+            except TriageUnavailable:
                 trace.finish("triage", "failed", triage_info.get("detail", "unavailable"))
                 raise
             trace.finish("triage", "ok")
@@ -250,10 +284,27 @@ class AgentPipeline:
                     "evidence", self._retrieve_evidence(conversation, conversation_id, evidence_info))
             else:
                 yield ("step", {"step": "tools", "message": "Checking relevant tools and sources…"})
-                tool_results, evidence_result = await asyncio.gather(
-                    trace.timed("tools", self._run_tools(conv_text, tools_info)),
-                    trace.timed("evidence", self._retrieve_evidence(conversation, conversation_id, evidence_info)),
-                )
+                async with asyncio.TaskGroup() as tasks:
+                    retrieval = tasks.create_task(trace.timed(
+                        "evidence", self._retrieve_evidence(conversation, conversation_id, evidence_info)))
+                    tool_results = await trace.timed("tools", self._run_tools(conv_text, tools_info))
+                    confirmation_needed = any(result.get("status") == "confirmation_required" for result in tool_results)
+                    if confirmation_needed:
+                        retrieval.cancel()
+                if confirmation_needed:
+                    trace.finish("tools", "fallback", "confirmation_required")
+                    trace.finish("evidence", "fallback", "not_used")
+                    self._outcomes["tool_confirmation_required"] += 1
+                    answer = FORM_CONFIRMATION_DETAIL
+                    if any(result["key"] == "child_dose_check" for result in tool_results):
+                        answer = f"{INFANT_FEVER_GUIDANCE}.\n\n{answer}"
+                    yield ("result", _empty_result(
+                        answer=answer,
+                        tool_results=tool_results,
+                        handoff=handoff("tool_confirmation_required", tool_results=tool_results),
+                    ))
+                    return
+                evidence_result = retrieval.result()
             if sheet_mode:
                 trace.finish("tools", "skipped")
             elif tools_info.get("failed"):
@@ -306,13 +357,15 @@ class AgentPipeline:
             answer_chars = 0
             over_budget = False
             try:
-                async for chunk in self.llm.generate_stream(answer_user, system=WHEN_TO_CALL_SYSTEM if sheet_mode else ANSWER_SYSTEM):
-                    answer_parts.append(chunk)
-                    answer_chars += len(chunk)
-                    if answer_chars > self.max_answer_chars:
-                        over_budget = True
-                        raise ReviewUnavailable("Answer exceeded its budget")
-
+                system = WHEN_TO_CALL_SYSTEM if sheet_mode else ANSWER_SYSTEM
+                with operation("pipeline.draft"):
+                    async with aclosing(self.llm.generate_stream(answer_user, system=system)) as stream:
+                        async for chunk in stream:
+                            answer_parts.append(chunk)
+                            answer_chars += len(chunk)
+                            if answer_chars > self.max_answer_chars:
+                                over_budget = True
+                                raise ReviewUnavailable("Answer exceeded its budget")
             except Exception as exc:
                 trace.finish("draft", "failed", "over_budget" if over_budget else "interrupted")
                 raise ReviewUnavailable("Answer generation was interrupted. Please try again.") from exc
@@ -327,10 +380,12 @@ class AgentPipeline:
             trace.start("review")
             review_info: dict = {}
             try:
-                answer = await self._safety_check(question, answer, evidence_result, tool_results, review_info)
-                self._validate_answer(answer, len(articles))
+                with operation("pipeline.review") as span:
+                    answer = await self._safety_check(question, answer, evidence_result, tool_results, review_info)
+                    self._validate_answer(answer, len(articles))
+                    span.set_attribute("medical_harness.revised", bool(review_info.get("revised")))
             except ReviewUnavailable:
-                trace.finish("review", "failed", "attempts=2")
+                trace.finish("review", "failed", f"attempts={review_info['attempts']}")
                 raise
             if review_info.get("revised"):
                 trace.finish("review", "fallback", "revised_once")
@@ -369,6 +424,9 @@ class AgentPipeline:
                 handoff=handoff(reason, tool_results=tool_results, articles=articles, answer=answer, sheet=sheet_mode),
                 **({"sheet": build_when_to_call_sheet()} if sheet_mode else {}),
             ))
+        except TriageUnavailable as exc:
+            exc.handoff = handoff("triage_unavailable")
+            raise
         except ReviewUnavailable as exc:
             exc.handoff = handoff("review_unavailable", tool_results=tool_results, articles=articles)
             raise
@@ -379,7 +437,7 @@ class AgentPipeline:
         labels, papers = [], []
         for result in tool_results:
             for item in result.get("items", []):
-                if not item.get("tldr"):
+                if not _has_excerpt(item):
                     continue
                 if item.get("evidence_kind") == "label_section":
                     labels.append(item)
@@ -391,7 +449,7 @@ class AgentPipeline:
 
         return {
             key: self._outcomes[key]
-            for key in ("conversation", "follow_up", "answer", "emergency", "evidence_unavailable")
+            for key in ("conversation", "follow_up", "answer", "emergency", "evidence_unavailable", "tool_confirmation_required")
         }
 
     @staticmethod
@@ -421,8 +479,12 @@ class AgentPipeline:
         async def compute():
             try:
                 if inspect.iscoroutinefunction(self.evidence.search):
-                    return await self.evidence.search(conversation, conversation_id)
-                return await asyncio.to_thread(self.evidence.search, conversation, conversation_id)
+                    result = await self.evidence.search(conversation, conversation_id)
+                else:
+                    result = await asyncio.to_thread(self.evidence.search, conversation, conversation_id)
+                articles = result.get("articles", [])
+                usable = [article for article in articles if _has_excerpt(article)]
+                return result if len(usable) == len(articles) else {**result, "articles": usable, "response": ""}
             except Exception:
                 logger.warning("pipeline.evidence failed")
                 info["error"] = True
@@ -440,25 +502,24 @@ class AgentPipeline:
             )
             info["detail"] = "invalid_json"
             triage = parse_json_response(raw)
-            if triage.get("action") not in {"ask", "answer", "emergency", "conversation"}:
-                raise ReviewUnavailable("Unable to assess this question. Please try again.")
-            if triage["action"] == "conversation":
-                kind = triage.get("conversation_kind")
-                if kind not in CONVERSATION_REPLIES:
-                    raise ReviewUnavailable("Unable to classify this message. Please try again.")
-                triage["conversation_kind"] = kind
-            questions = triage.get("follow_up_questions", [])
-            if not isinstance(questions, list) or any(not isinstance(q, str) or not q.strip() for q in questions):
-                raise ReviewUnavailable("Invalid clarification questions. Please try again.")
-            triage["follow_up_questions"] = list(dict.fromkeys(questions))[:3]
-            if triage["action"] == "ask" and not triage["follow_up_questions"]:
-                raise ReviewUnavailable("Unable to clarify this question. Please try again.")
+            action = triage.get("action")
+            if action not in {"ask", "answer", "emergency", "conversation"}:
+                raise ValueError("Invalid triage action")
+            if action == "conversation" and triage.get("conversation_kind") not in CONVERSATION_REPLIES:
+                raise ValueError("Invalid conversation classification")
+            if action == "ask":
+                questions = triage.get("follow_up_questions")
+                if not isinstance(questions, list) or not questions or any(
+                    not isinstance(q, str) or not q.strip() for q in questions
+                ):
+                    raise ValueError("Invalid clarification questions")
+                triage["follow_up_questions"] = list(dict.fromkeys(questions))[:3]
             return triage
 
         try:
             return await self._cached_step("triage", conv_text, compute)
         except Exception:
-            raise ReviewUnavailable("Unable to assess this question safely. Please try again.") from None
+            raise TriageUnavailable("Unable to complete the emergency screen") from None
 
     async def _run_tools(self, conv_text: str, info: dict) -> list[dict]:
         async def compute():
@@ -472,7 +533,8 @@ class AgentPipeline:
             return selection
 
         try:
-            selection = await self._cached_step("tool_selection", conv_text, compute)
+            with operation("tool.plan"):
+                selection = await self._cached_step("tool_selection", conv_text, compute)
         except Exception:
             logger.warning("pipeline.tool_selection failed")
             info["failed"] = True
@@ -483,6 +545,16 @@ class AgentPipeline:
         if not selected:
             return []
 
+        confirmations = []
+        for key in selected:
+            if key in FORM_CONFIRMATION_TOOLS:
+                info = self.tools[key]
+                confirmations.append({
+                    "key": key, "tool": info["name"], "source": info["source"], "scope": info["scope"],
+                    "status": "confirmation_required", "error": FORM_CONFIRMATION_DETAIL,
+                })
+        if confirmations:
+            return confirmations
 
         extractions = await asyncio.gather(
             *(
@@ -498,13 +570,18 @@ class AgentPipeline:
             if incomplete and tool_key in REFERENCE_TOOLS:
                 return None
             try:
-                if tool_key in REFERENCE_TOOLS:
-                    if self.references is None:
-                        return None
-                    key = text_key(self.policy_version, cache_scope.get(), tool_key, conv_text)
-                    return await self.step_cache.get_or_compute(key,
-                        lambda: self.references.run(tool_key, variables), cache_if=lambda value: value.get("status") == "available")
-                return TOOL_REGISTRY[tool_key]["function"](variables)
+                with operation("tool.execute", {"tool.name": tool_key}) as span:
+                    if tool_key in REFERENCE_TOOLS:
+                        if self.references is None:
+                            return None
+                        key = text_key(self.policy_version, cache_scope.get(), tool_key, conv_text)
+                        result = await self.step_cache.get_or_compute(key,
+                            lambda: self.references.run(tool_key, variables), cache_if=lambda value: value.get("status") == "available")
+                    else:
+                        result = TOOL_REGISTRY[tool_key]["function"](variables)
+                    outcome = "error" if result.get("error") else "ok"
+                    span.set_attribute("medical_harness.outcome", outcome)
+                    return result
             except Exception:
                 logger.warning("pipeline.tool_execution failed tool=%s", tool_key)
                 return None
@@ -520,12 +597,13 @@ class AgentPipeline:
             tool_name=tool_name, variables=", ".join(variables)
         )
         try:
-            raw = await self.llm.generate(
-                VARIABLE_EXTRACTION_USER.format(conversation=conv_text), system=system,
-                max_tokens=600, json_mode=True
-            )
-            parsed = parse_json_response(raw)
-            return {k: v for k, v in parsed.items() if v is not None}
+            with operation("tool.extract", {"tool.name": tool_name}):
+                raw = await self.llm.generate(
+                    VARIABLE_EXTRACTION_USER.format(conversation=conv_text), system=system,
+                    max_tokens=600, json_mode=True
+                )
+                parsed = parse_json_response(raw)
+                return {name: parsed[name] for name in variables if parsed.get(name) is not None}
         except Exception:
             logger.warning("pipeline.variable_extraction failed tool=%s", tool_name)
             return None
@@ -576,15 +654,18 @@ class AgentPipeline:
             citations_text += "\nTool outputs (label directory entries do not contain label contents):\n" + json.dumps(tool_results, ensure_ascii=False)
         candidate = answer
         for attempt in range(2):
+            if info is not None:
+                info["attempts"] = attempt + 1
             user = SAFETY_USER.format(question=question, answer=candidate, citations=citations_text)
             try:
-                raw = await self.llm.generate(user, system=SAFETY_SYSTEM, max_tokens=4096, json_mode=True)
-                result = parse_json_response(raw)
-                if result.get("is_safe") is True and not result.get("issues"):
+                with operation("review.verdict", {"medical_harness.attempt": attempt + 1}) as span:
+                    raw = await self.llm.generate(user, system=SAFETY_SYSTEM, max_tokens=4096, json_mode=True)
+                    verdict = _SafetyVerdict.model_validate(parse_json_response(raw, whole_object=True))
+                    span.set_attribute("medical_harness.approved", verdict.is_safe)
+                if verdict.is_safe:
                     return candidate
-                revised = result.get("revised_answer")
-                if attempt == 0 and result.get("is_safe") is False and isinstance(revised, str) and revised.strip():
-                    revised = remove_source_appendix(revised)
+                if attempt == 0 and verdict.revised_answer.strip():
+                    revised = remove_source_appendix(verdict.revised_answer)
                     self._validate_answer(revised, len(articles))
                     candidate = revised
                     if info is not None:

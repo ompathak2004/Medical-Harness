@@ -6,7 +6,7 @@ REPORT = Path(__file__).resolve().parents[1] / "docs" / "FAILURE_MODES.md"
 EXPECTED_IDS = [
     "evidence_timeout", "evidence_empty", "triage_malformed_json", "review_timeout", "review_unsafe_twice",
     "answer_over_budget", "reference_5xx", "reference_circuit_open", "rxnorm_timeout", "rxnorm_429", "rxnorm_malformed",
-    "growth_table_missing", "dose_out_of_range", "source_excerpt_injection",
+    "growth_table_missing", "dose_concentration_unconfirmed", "source_excerpt_injection",
     "clarification_limit", "label_combination_only", "tool_input_missing", "emergency",
 ]
 EXPECTED_TOOL_IDS = [

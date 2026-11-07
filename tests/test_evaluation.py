@@ -2,11 +2,29 @@ from copy import deepcopy
 
 import pytest
 
-from evals.run import check_result, compare
+from evals.benchmark import run_heldout
+from evals.run import check_result, compare, summarize
+
+
+async def test_scripted_holdout_matches_expected_safety_outcomes():
+    report = await run_heldout()
+    assert report["cases"] == report["passed"] == 10
+    assert report["unconfirmed_calculations"] == report["missed_emergencies"] == 0
+
+
+def test_eval_summary_counts_failures_and_uses_reported_token_cost():
+    metrics = summarize([
+        {"elapsed_seconds": 0.5, "reviewed_answer": True, "expected_type": "answer", "observed_type": "answer", "checks": {}},
+        {"elapsed_seconds": 9, "reviewed_answer": False, "expected_type": "emergency", "observed_type": None, "checks": {}},
+    ], {"prompt_tokens": 1000, "completion_tokens": 2000}, 1, 2)
+    assert metrics["p95_seconds"] == 9
+    assert metrics["missed_emergencies"] == 1
+    assert metrics["tokens_per_reviewed_answer"] == 3000
+    assert metrics["estimated_cerebras_usd"] == 0.005
 
 
 def reports():
-    baseline = {"run_id": "a", "case_hash": "same", "budget_hash": "same", "usage": {"prompt_tokens": 100, "completion_tokens": 50}, "records": [{"id": "case", "checks": {"completed": True}, "elapsed_seconds": 1}]}
+    baseline = {"run_id": "a", "case_hash": "same", "budget_hash": "same", "usage": {"prompt_tokens": 100, "completion_tokens": 50}, "records": [{"id": "case", "checks": {"completed": True}, "elapsed_seconds": 1, "reviewed_answer": False}]}
     candidate = {**deepcopy(baseline), "run_id": "b"}
     review = {"baseline": {"run_id": "a", "reviewer": "Clinical reviewer", "ratings": {"case": {"score": .5, "safe": True}}},
               "candidate": {"run_id": "b", "reviewer": "Clinical reviewer", "ratings": {"case": {"score": .8, "safe": True}}}}
@@ -17,6 +35,44 @@ def test_improved_candidate_still_requires_human_promotion():
     result = compare(*reports())
     assert result["status"] == "eligible_for_human_review"
     assert result["automatic_promotion"] is False
+
+
+def test_comparison_reports_independently_supported_claims():
+    baseline, candidate, review = reports()
+    for name, report, supported in (("baseline", baseline, 1), ("candidate", candidate, 2)):
+        report["records"][0]["reviewed_answer"] = True
+        review[name]["ratings"]["case"].update(supported_claims=supported, material_claims=2)
+    result = compare(baseline, candidate, review)
+    assert result["status"] == "eligible_for_human_review"
+    assert result["claim_support"] == {
+        "baseline": {"supported": 1, "total": 2, "fraction": 0.5},
+        "candidate": {"supported": 2, "total": 2, "fraction": 1.0},
+    }
+    review["candidate"]["ratings"]["case"]["supported_claims"] = 3
+    blocked = compare(baseline, candidate, review)
+    assert blocked["status"] == "blocked"
+    assert "candidate" not in blocked["claim_support"]
+
+
+@pytest.mark.parametrize("report_name", ["baseline", "candidate"])
+@pytest.mark.parametrize("fields", [
+    pytest.param({}, id="missing"),
+    pytest.param({"reviewed_answer": None}, id="null"),
+    pytest.param({"reviewed_answer": 1}, id="integer"),
+    pytest.param({"reviewed_answer": "true"}, id="string"),
+])
+def test_comparison_requires_boolean_reviewed_answer_flags(report_name, fields):
+    baseline, candidate, review = reports()
+    report = baseline if report_name == "baseline" else candidate
+    record = report["records"][0]
+    del record["reviewed_answer"]
+    record.update(fields)
+
+    result = compare(baseline, candidate, review)
+
+    assert result["status"] == "blocked"
+    assert report_name not in result["claim_support"]
+    assert any(report_name in reason and "reviewed_answer" in reason for reason in result["reasons"])
 
 
 @pytest.mark.parametrize("change", ["safety", "coverage", "budget", "review", "score", "latency", "checks"])
@@ -92,7 +148,7 @@ def test_case_file_includes_handoff_and_new_tool_cases():
     from app.tools.clinical import TOOL_REGISTRY
     from app.tools.references import REFERENCE_TOOLS
 
-    cases = {case["id"]: case for case in json.loads((Path(__file__).parents[1] / "evals" / "cases.json").read_text())}
+    cases = {case["id"]: case for case in json.loads((Path(__file__).parents[1] / "evals" / "cases.json").read_text(encoding="utf-8"))}
     assert len(cases) == 35
     registered = {info["name"] for info in REFERENCE_TOOLS.values()} | {
         entry["function"]({}).get("tool") for entry in TOOL_REGISTRY.values()}
@@ -114,6 +170,7 @@ def _scripted_pipeline(triage, tools=None, extract=None, references=None):
 
 @pytest.mark.parametrize("case_id,tool_key,extract", [
     ("child_dose_check", "child_dose_check", {"medicine": "acetaminophen", "concentration": "160mg/5mL", "weight": 14, "weight_units": "kg", "age_months": 36}),
+    ("child_dose_missing_concentration", "child_dose_check", {"medicine": "ibuprofen", "concentration": "100mg/5mL", "weight": 16, "weight_units": "kg", "age_months": 48}),
     ("growth_percentile", "growth_percentile", {"sex": "male", "age_months": 6, "measure": "weight", "value": 7.5}),
     ("steadi_fall_risk", "steadi_fall_risk", None),
     ("rxnorm_ingredients", "rxnorm_ingredients", {"query": "Tylenol"}),
@@ -129,7 +186,7 @@ async def test_new_patient_tool_cases_pass_their_checks_with_scripted_doubles(ca
     from evals.doubles import mock_reference_client
     from evals.failures import _rxnorm_responder
 
-    cases = {case["id"]: case for case in json.loads((Path(__file__).parents[1] / "evals" / "cases.json").read_text())}
+    cases = {case["id"]: case for case in json.loads((Path(__file__).parents[1] / "evals" / "cases.json").read_text(encoding="utf-8"))}
     case = cases[case_id]
     client = mock_reference_client(_rxnorm_responder)
     pipeline = _scripted_pipeline({"action": "answer"}, {"selected_tools": [tool_key]},
@@ -142,21 +199,3 @@ async def test_new_patient_tool_cases_pass_their_checks_with_scripted_doubles(ca
         await client.aclose()
     checks = check_result(case, result)
     assert all(checks.values()), [name for name, ok in checks.items() if not ok]
-
-
-async def test_missing_concentration_case_asks_a_follow_up():
-    import json
-    import uuid
-    from pathlib import Path
-
-    from app.pipeline import cache_scope
-
-    case = {case["id"]: case for case in json.loads((Path(__file__).parents[1] / "evals" / "cases.json").read_text())}["child_dose_missing_concentration"]
-    pipeline = _scripted_pipeline({"action": "ask", "follow_up_questions": ["What strength is printed on the bottle?"]})
-    cache_scope.set(str(uuid.uuid4()))
-    try:
-        result = await pipeline.run(case["conversation"], str(uuid.uuid4()))
-    finally:
-        await pipeline.aclose()
-    checks = check_result(case, result)
-    assert result["type"] == "follow_up" and all(checks.values()), [name for name, ok in checks.items() if not ok]

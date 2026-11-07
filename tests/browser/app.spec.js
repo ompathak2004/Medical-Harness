@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
+import { docScreenshot } from './fixtures.js';
 
 function fixtureHandoff(question, sources) {
   return {
@@ -67,7 +68,7 @@ for (const theme of ['light', 'dark']) {
       await expect(page.locator('#status-label')).toHaveText('Online');
       expect(requests.some(url => /atlas|\.glb|cdn\.jsdelivr|fonts\.google/.test(url))).toBe(false);
       await mkdir('docs/media', { recursive: true });
-      await page.screenshot({ path: `docs/media/${label}-${theme}.png` });
+      await docScreenshot(page, { path: `docs/media/${label}-${theme}.png` });
       await respond(page);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await page.getByRole('button', { name: /Explore knee in 3D/ }).click();
@@ -75,7 +76,7 @@ for (const theme of ['light', 'dark']) {
       await expect(page.locator('#atlas-canvas canvas')).toBeVisible();
       await expect(page.locator('#atlas-status')).toBeHidden({ timeout: 20000 });
       expect(requests.filter(url => url.endsWith('.glb'))).toHaveLength(1);
-      await page.screenshot({ path: `docs/media/anatomy-${label}-${theme}.png` });
+      await docScreenshot(page, { path: `docs/media/anatomy-${label}-${theme}.png` });
       await page.locator('#atlas-search').fill('patella');
       await expect(page.locator('#atlas-structures option')).toHaveCount(2);
       await page.locator('#atlas-structures').selectOption({ label: 'left patella' });
@@ -190,7 +191,7 @@ for (const theme of ['light', 'dark']) {
       await expect(page.locator('.visual-launch')).toBeVisible();
       const width = await page.locator('.chat-area').evaluate(el => el.clientWidth);
       expect(requests.some(url => /education-.*\.js|\.glb/.test(url))).toBe(false);
-      await page.screenshot({ path: `docs/media/answer-${label}-${theme}.png` });
+      await docScreenshot(page, { path: `docs/media/answer-${label}-${theme}.png` });
       const citation = page.locator('.citation-ref').first();
       await citation.click();
       await expect(page.getByRole('dialog', { name: 'Source details' })).toBeVisible();
@@ -198,14 +199,14 @@ for (const theme of ['light', 'dark']) {
       await expect(page.getByRole('link', { name: 'View source' })).toHaveAttribute('href', eyeAnswer.articles[0].url);
       await page.keyboard.press('Shift+Tab');
       expect(await page.locator('#article-sidebar').evaluate(el => el.contains(document.activeElement))).toBe(true);
-      await page.screenshot({ path: `docs/media/source-${label}-${theme}.png` });
+      await docScreenshot(page, { path: `docs/media/source-${label}-${theme}.png` });
       await page.keyboard.press('Escape');
       await expect(citation).toBeFocused();
       await page.getByRole('button', { name: /How eye pressure works/ }).click();
       await expect(page.getByRole('dialog', { name: 'Understanding eye pressure' })).toBeVisible();
       await page.getByRole('button', { name: 'Less drainage', exact: true }).click();
       await expect(page.locator('.education-copy')).toContainText('does not establish a glaucoma diagnosis');
-      await page.screenshot({ path: `docs/media/education-${label}-${theme}.png` });
+      await docScreenshot(page, { path: `docs/media/education-${label}-${theme}.png` });
       await page.getByRole('button', { name: 'Surgery', exact: true }).click();
       await expect(page.locator('.education-copy')).toContainText('Surgery has risks');
       await expect(page.locator('.motion-control')).toBeHidden();
@@ -236,7 +237,7 @@ test('clarification preserves prior dates and sends corrected local context', as
   await page.getByLabel('When did this start?', { exact: true }).fill('today morning');
   await page.locator('.question-item summary').nth(1).click();
   await page.getByRole('button', { name: 'I’m not sure' }).last().click();
-  await page.screenshot({ path: 'docs/media/clarification-mobile.png' });
+  await docScreenshot(page, { path: 'docs/media/clarification-mobile.png' });
   await page.getByRole('button', { name: /Submit answers/ }).click();
   await expect(page.locator('.answer-body').last()).toContainText('synthetic example');
   expect(payloads[1].context.time_zone).toBe('Pacific/Auckland');

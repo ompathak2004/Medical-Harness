@@ -6,6 +6,8 @@ import { clearPrintSheet, printSheet } from './print.js';
 const REASON_LINES = {
   user_requested: 'The person asked for this summary.',
   evidence_unavailable: 'No medical sources could be retrieved, so no answer was written.',
+  triage_unavailable: 'The emergency screen could not be completed.',
+  tool_confirmation_required: 'A tool needs values confirmed in its form.',
   review_unavailable: 'The safety review did not complete.',
   clarification_limit: 'The app asked its one round of clarifying questions, then answered with what it had.',
   clarification_pending: 'The app asked clarifying questions and had not answered yet.',
@@ -205,9 +207,12 @@ export function openHandoff(handoff, context, triggerEl) {
   announce('');
   dialog.querySelector('.handoff-intro').textContent = handoffHeader(context).join(' ');
   const notice = dialog.querySelector('.handoff-notice');
-  const failed = handoff.reason === 'review_unavailable';
-  notice.hidden = !failed;
-  notice.textContent = failed ? 'The app could not complete its safety review, so no answer was shown. The details below are still yours to bring to a clinician.' : '';
+  const failureNotices = {
+    review_unavailable: 'The app could not complete its safety review, so no answer was shown. The details below are still yours to bring to a clinician.',
+    triage_unavailable: 'The emergency screen could not be completed. If this could be an emergency, contact your local emergency services now.',
+  };
+  notice.textContent = failureNotices[handoff.reason] || '';
+  notice.hidden = !notice.textContent;
   const sections = dialog.querySelector('.handoff-sections');
   sections.replaceChildren(...handoffSections(handoff, context).map(([title, text]) => {
     const section = node('section', 'handoff-section');

@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 import { EDUCATION } from '../../static/js/education-catalog.js';
 import { GUIDES } from '../../static/js/education-guides.js';
+import { docScreenshot } from './fixtures.js';
 
 async function answerWith(page, id) {
   await page.route('**/api/chat/stream', route => route.fulfill({
@@ -33,7 +34,7 @@ for (const theme of ['light', 'dark']) {
         await answerWith(page, id);
         const trigger = page.getByRole('button', { name: EDUCATION[id].launch, exact: false });
         if (id === 'ecg') {
-          await page.screenshot({ path: `docs/media/visual-launch-${size}-${theme}.png` });
+          await docScreenshot(page, { path: `docs/media/visual-launch-${size}-${theme}.png` });
         }
         await trigger.click();
         const dialog = page.getByRole('dialog', { name: EDUCATION[id].title, exact: true });
@@ -54,7 +55,7 @@ for (const theme of ['light', 'dark']) {
         await dialog.locator('.education-steps').scrollIntoViewIfNeeded();
         if (guide.tool) await dialog.locator('[data-action="open-tool"]').evaluate(el => el.scrollIntoView({ block: 'center' }));
         if ((size === 'desktop' && theme === 'light') || (size === 'mobile' && theme === 'dark')) {
-          await page.screenshot({ path: `docs/media/guide-${id}-${size}-${theme}.png` });
+          await docScreenshot(page, { path: `docs/media/guide-${id}-${size}-${theme}.png` });
         }
         await page.keyboard.press('Escape');
         await expect(trigger).toBeFocused();
