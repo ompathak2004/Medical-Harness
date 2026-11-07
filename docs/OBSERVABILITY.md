@@ -22,8 +22,25 @@ Create a [Grafana Cloud Free stack](https://grafana.com/pricing/). In its [OTLP 
 - `OTEL_EXPORTER_OTLP_HEADERS` is the authorization header from the same setup. Preserve the `Basic%20` encoding for Python.
 - `OTEL_TRACES_SAMPLER_ARG` is a fraction between 0 and 1. Use 1 for a small synthetic demo. The default 0.1 samples one tenth of requests on average.
 
-Import [the dashboard](../deploy/grafana-dashboard.json) and select the stack's Tempo data source. Filter the request list by `span.medical_harness.request_id` to inspect one run. The panels show sampled p95 request duration for completed answers, application outcomes, and input and output token volume. Use a one-minute minimum interval when setting up an outcome-rate alert. Review `review_blocked`, `evidence_unavailable`, and `timeout` counts against a recent baseline before choosing alert thresholds. For a synthetic preview at full sampling, a single unexpected outcome is a useful alert. Use a separate uptime check against `GET /api/health` for availability.
+Import [the dashboard](../deploy/grafana-dashboard.json) and select the stack's Tempo data source. Filter traces by `span.medical_harness.request_id` to inspect one run. The panels show sampled p95 request duration for completed answers, application outcomes, and input and output token volume.
 
 Set both `CEREBRAS_INPUT_USD_PER_MILLION` and `CEREBRAS_OUTPUT_USD_PER_MILLION` to enable the estimated spend panel. Its estimates apply the entered rates to provider-reported token counts. Billing can differ due to cached rates, unreported usage, and evidence provider charges. Use your providers' dashboards for spend limits and billing totals.
+
+### Alert on application outcomes
+
+In the stack's [trace metrics configuration](https://grafana.com/docs/grafana-cloud/platform/security-and-account-management/account-management/cloud-stacks/grafana-dbcfg-app/traces/), enable span metrics and the dimensions `medical_harness.outcome` and `deployment.environment.name`. In Grafana Alerting, select the Prometheus data source and start with this instant query:
+
+```promql
+sum by (deployment_environment_name, medical_harness_outcome) (
+  increase(traces_spanmetrics_calls_total{
+    service="medical-harness",
+    span_kind="SPAN_KIND_SERVER",
+    span_name=~"POST /api/chat(/stream)?",
+    medical_harness_outcome=~"review_blocked|evidence_unavailable|triage_unavailable|timeout"
+  }[10m])
+)
+```
+
+Evaluate once a minute. Test the rule in Preview, then set thresholds against normal traffic for each environment. These counts depend on the trace sample rate. Use an independent uptime check on `GET /api/health` to detect outages and use [Grafana usage limits](https://grafana.com/pricing/) to keep data volume within the free plan.
 
 Provider conversations and the app's cache are separate from telemetry. Review provider retention, allowed users and regions, and clinical oversight before accepting identifiable patient data.
