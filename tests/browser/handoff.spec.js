@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { handoffText } from '../../static/js/handoff.js';
+import { docScreenshot, clipboardText } from './fixtures.js';
 
 const RECEIVED_AT = '2026-10-25T18:42:00+00:00';
 
@@ -117,7 +118,7 @@ for (const theme of ['light', 'dark']) {
       expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
       expect(box.y).toBeGreaterThanOrEqual(0);
       expect(box.y + box.height).toBeLessThanOrEqual(viewport.height);
-      await page.screenshot({ path: `docs/media/handoff-${label}-${theme}.png` });
+      await docScreenshot(page, { path: `docs/media/handoff-${label}-${theme}.png` });
       await page.keyboard.press('Escape');
       await expect(trigger).toBeFocused();
       expect(errors).toEqual([]);
@@ -153,7 +154,7 @@ test('Copy writes the exact handoff text and shows feedback', async ({ page, con
   await page.getByRole('button', { name: 'Hand this to a clinician' }).click();
   await page.getByRole('dialog', { name: 'Hand this to a clinician' }).getByRole('button', { name: 'Copy' }).click();
   await expect(page.getByRole('button', { name: 'Copied' })).toBeVisible();
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(handoffText(handoff, context));
+  expect(await clipboardText(page)).toBe(handoffText(handoff, context));
 });
 
 test('Download yields a .txt equal to the handoff text', async ({ page }) => {

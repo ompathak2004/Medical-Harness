@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
+import { docScreenshot, clipboardText } from './fixtures.js';
 
 // Medicines and home safety: medication_schedule, steadi_fall_risk, when_to_call.
 // The shell and the backend are covered elsewhere; here /api/tools/* and /api/chat/stream are mocked
@@ -103,7 +104,7 @@ async function answerSteadi(dialog, yes = []) {
     await fs.getByLabel(yes.includes(key) ? 'Yes' : 'No', { exact: true }).check();
   }
 }
-const clip = page => page.evaluate(() => navigator.clipboard.readText());
+const clip = page => clipboardText(page);
 const printed = page => page.evaluate(() => document.getElementById('print-sheet').textContent);
 const stubPrint = page => page.addInitScript(() => { window.print = () => { window.__printed = true; }; });
 
@@ -229,7 +230,7 @@ test('medication_schedule: Print fills the sheet with the grid and header, then 
   await expect(page.locator('.app-header')).toBeHidden();
   await expect(dialog).toBeHidden();
   await page.setViewportSize({ width: 794, height: 1123 });
-  await page.screenshot({ path: 'docs/media/sheet-medication-print.png', fullPage: true });
+  await docScreenshot(page, { path: 'docs/media/sheet-medication-print.png', fullPage: true });
   await page.evaluate(() => window.dispatchEvent(new Event('afterprint')));
   await expect(sheet).toHaveText('');
   await expect(sheet).toHaveJSProperty('hidden', true);
@@ -430,7 +431,7 @@ test('when_to_call: Copy and Print carry the typed details; print drops live lin
   await page.setViewportSize({ width: 794, height: 1123 });
   await expect(sheet).toBeVisible();
   expect(await sheet.locator('.call-phone').first().evaluate(el => parseFloat(getComputedStyle(el).fontSize))).toBeGreaterThanOrEqual(23);
-  await page.screenshot({ path: 'docs/media/sheet-when-to-call-print.png', fullPage: true });
+  await docScreenshot(page, { path: 'docs/media/sheet-when-to-call-print.png', fullPage: true });
 });
 
 test('when_to_call: when the sources are unavailable the middle tier is a blank box with ruled lines on paper', async ({ page }) => {
@@ -557,7 +558,7 @@ for (const theme of ['light', 'dark']) {
         }
         if ((size === 'desktop' && theme === 'light') || (size === 'mobile' && theme === 'dark')) {
           await dialog.locator('.tool-result').scrollIntoViewIfNeeded();
-          await page.screenshot({ path: `docs/media/tool-${key}-${size}-${theme}.png` });
+          await docScreenshot(page, { path: `docs/media/tool-${key}-${size}-${theme}.png` });
         }
         expect(errors).toEqual([]);
       });

@@ -54,8 +54,8 @@ class FormModel(BaseModel):
 # ---------------------------------------------------------------- blood pressure
 
 BP_ALERT = ("A reading above 180/120 mmHg: AHA says that if you also have chest pain, shortness of breath, back pain, "
-            "numbness or weakness, a change in vision, or difficulty speaking, call emergency services. Otherwise wait five "
-            "minutes, check again, and contact your clinician if it is still above 180/120.")
+            "numbness or weakness, a change in vision, or difficulty speaking, call emergency services now. Otherwise wait "
+            "at least one minute, check again, and contact your clinician as soon as possible if it is still above 180/120.")
 BP_BAND_NOTE = "2017 ACC/AHA band for discussion; home thresholds are set by your clinician."
 BP_PARTIAL_NOTE = "Fewer readings than the guideline asks for; the average is less reliable."
 BP_ORTHOSTATIC_NOTE = "A drop this size on standing is something to ask about."

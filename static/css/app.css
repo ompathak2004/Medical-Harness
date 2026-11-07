@@ -387,7 +387,7 @@ dialog::backdrop { background: #00000080; backdrop-filter: blur(3px); }
 .home-tools { margin-top: 30px; }
 .home-tools .section-eyebrow { margin: 0 0 12px; }
 .home-tools .chip { background: transparent; }
-.tool-dialog { width: min(680px, calc(100vw - 32px)); max-height: calc(100dvh - 40px); margin: auto; }
+.tool-dialog { width: min(680px, calc(100vw - 32px)); max-height: calc(100dvh - 40px); margin: auto; scroll-padding-block-start: 100px; }
 .tool-dialog [hidden] { display: none !important; }
 .tool-header { align-items: center; }
 .tool-titles { flex: 1; min-width: 0; }
@@ -421,7 +421,7 @@ dialog::backdrop { background: #00000080; backdrop-filter: blur(3px); }
 .tool-dialog input[type='radio'], .tool-dialog input[type='checkbox'] { width: 20px; height: 20px; margin: 0; flex: none; accent-color: var(--brand); border: 0; background: none; }
 .tool-units { display: inline-flex; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; flex: none; }
 .tool-units label { position: relative; }
-.tool-units input { position: absolute; opacity: 0; width: 1px !important; height: 1px !important; }
+.tool-units input { position: absolute; inset: 0; opacity: 0; width: 100% !important; height: 100% !important; cursor: pointer; }
 .tool-units span { display: grid; place-items: center; min-width: 48px; min-height: 44px; padding: 0 12px; font-size: 14px; cursor: pointer; }
 .tool-units input:checked + span { background: var(--brand); color: var(--bg); }
 .tool-units input:focus-visible + span { outline: 2px solid var(--focus); outline-offset: -4px; }

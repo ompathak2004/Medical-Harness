@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
+import { docScreenshot, clipboardText } from './fixtures.js';
 
 // Children's tools: child_dose_check, growth_percentile (+ child_bmi_percentile), ors_planner.
 // Most tests mock POST /api/tools/{key} with synthetic numbers; the "real backend" tests at the end do not.
@@ -74,7 +75,7 @@ async function fillDose(page, { medicine = 'Acetaminophen (paracetamol)', streng
   if (medicine) await d.getByLabel(medicine).check();
   if (strength) await d.getByLabel('Product strength on the label').selectOption(strength);
   await d.getByLabel('Child\u2019s weight', { exact: true }).fill(weight);
-  if (unit === 'lb') await d.locator('#tool-weight').locator('xpath=ancestor::div[contains(@class,"tool-control")]').getByText('lb', { exact: true }).click();
+  if (unit === 'lb') await d.getByRole('radio', { name: 'lb', exact: true }).check();
   await d.getByLabel('Age in years').fill(years);
   await d.getByLabel('And months').fill(months);
   if (submit) await d.getByRole('button', { name: 'Show the label amount' }).click();
@@ -114,7 +115,7 @@ async function copyAndDownload(page, dialog, expected) {
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
   await dialog.getByRole('button', { name: 'Copy' }).click();
   await expect(dialog.locator('.tool-action-status')).toContainText('Copied');
-  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  const copied = await clipboardText(page);
   const [download] = await Promise.all([page.waitForEvent('download'), dialog.getByRole('button', { name: 'Download .txt' }).click()]);
   const saved = await readFile(await download.path(), 'utf8');
   expect(saved).toBe(copied);
@@ -157,7 +158,7 @@ for (const [key, sc] of Object.entries(SCENARIOS)) {
         if ((size === 'desktop' && theme === 'light') || (size === 'mobile' && theme === 'dark')) {
           await result.locator('.tool-summary').scrollIntoViewIfNeeded();
           await dialog.evaluate(el => { el.scrollTop = el.querySelector('.tool-result').offsetTop - 120; });
-          await page.screenshot({ path: `docs/media/tool-${key}-${size}-${theme}.png` });
+          await docScreenshot(page, { path: `docs/media/tool-${key}-${size}-${theme}.png` });
         }
         await page.keyboard.press('Escape');
         await expect(dialog).toBeHidden();
@@ -322,7 +323,7 @@ test('growth: pounds and inches are sent as the kg and cm the backend takes', as
   await main.getByLabel('And months').fill('9');
   await main.getByRole('radio', { name: 'Weight' }).check();
   await main.locator('#tool-weight').fill('18.5');
-  await main.getByRole('radiogroup', { name: /^Units for/ }).getByText('lb', { exact: true }).click();
+  await main.getByRole('radiogroup', { name: /^Units for/ }).getByRole('radio', { name: 'lb', exact: true }).check();
   await main.getByRole('button', { name: 'Show the result' }).click();
   await expect(main.locator('.tool-summary')).toBeVisible();
   expect(calls[0].body.inputs.value).toBeCloseTo(8.392, 2);
@@ -401,7 +402,7 @@ test('growth: the BMI form asks the second endpoint, refuses under 2 years, and 
   expect(await textOutside(bmi.locator('svg.tool-chart'))).toEqual([]);
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
   await bmi.getByRole('button', { name: 'Copy' }).click();
-  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  const copied = await clipboardText(page);
   expect(copied).toContain('Growth percentiles \u00B7 BMI for age (2 to 20 years)');
   expect(copied).toContain('BMI at this age (kg/m\u00B2): 5th 13.9, 85th 18.9, 95th 20.5.');
 });

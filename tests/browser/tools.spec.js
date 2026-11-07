@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { TOOL_CATALOG, TOOL_GROUPS } from '../../static/js/tools-catalog.js';
+import { docScreenshot, clipboardText } from './fixtures.js';
 
 // POST /api/tools/{key} is mocked throughout: these tests cover the shell, not the backend.
 const RECEIVED_AT = '2026-10-25T18:42:00+00:00';
@@ -65,7 +66,7 @@ for (const theme of ['light', 'dark']) {
       await expect(page.locator('.home-tools')).toBeVisible();
       expect(await noOverflow(page)).toBe(true);
       expect(requests.some(url => /tools-.*\.js/.test(url))).toBe(false);
-      await page.screenshot({ path: `docs/media/${size}-${theme}.png` });
+      await docScreenshot(page, { path: `docs/media/${size}-${theme}.png` });
 
       const trigger = page.locator('#tools-btn');
       expect((await trigger.boundingBox()).height).toBeGreaterThanOrEqual(44);
@@ -82,7 +83,7 @@ for (const theme of ['light', 'dark']) {
       expect(box.x).toBeGreaterThanOrEqual(0);
       expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
       expect(box.y + box.height).toBeLessThanOrEqual(viewport.height);
-      await page.screenshot({ path: `docs/media/tools-catalogue-${size}-${theme}.png` });
+      await docScreenshot(page, { path: `docs/media/tools-catalogue-${size}-${theme}.png` });
 
       await dialog.getByRole('button', { name: /Child fever-medicine amount/ }).click();
       await expect(dialog.getByRole('heading', { name: 'Child fever-medicine amount' })).toBeFocused();
@@ -202,7 +203,7 @@ test('request body follows the child_dose_check contract and Copy equals Downloa
   await expect(dialog.locator('.tool-cannot')).toContainText('What this does not tell you');
   await dialog.getByRole('button', { name: 'Copy' }).click();
   await expect(dialog.getByRole('button', { name: 'Copied' })).toBeVisible();
-  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  const copied = await clipboardText(page);
   const [download] = await Promise.all([page.waitForEvent('download'), dialog.getByRole('button', { name: 'Download .txt' }).click()]);
   expect(download.suggestedFilename()).toMatch(/\.txt$/);
   const saved = await readFile(await download.path(), 'utf8');
