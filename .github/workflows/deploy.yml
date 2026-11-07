@@ -33,10 +33,13 @@ jobs:
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
     steps:
       - name: Check deployment configuration
+        env:
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
         run: |
           test -n "$VERCEL_TOKEN" || { echo 'Set VERCEL_TOKEN in the GitHub environment.'; exit 1; }
           test -n "$VERCEL_ORG_ID" || { echo 'Set VERCEL_ORG_ID in the GitHub environment.'; exit 1; }
           test -n "$VERCEL_PROJECT_ID" || { echo 'Set VERCEL_PROJECT_ID in the GitHub environment.'; exit 1; }
+          test -n "$VERCEL_AUTOMATION_BYPASS_SECRET" || { echo 'Set VERCEL_AUTOMATION_BYPASS_SECRET in the GitHub environment.'; exit 1; }
           if [ "$TARGET" = production ] && [ "$GITHUB_REF" != refs/heads/main ]; then
             echo 'Production deployments must run from main.'
             exit 1
@@ -57,12 +60,32 @@ jobs:
         run: npm install --global vercel@65.0.0 --no-audit --no-fund
       - name: Load Vercel environment
         run: vercel pull --yes --environment="$TARGET" --token="$VERCEL_TOKEN"
-      - name: Build once and deploy
+      - name: Build and stage the checked revision
         id: deploy
         run: |
           flags=()
           if [ "$TARGET" = production ]; then flags+=(--prod); fi
           vercel build "${flags[@]}" --token="$VERCEL_TOKEN"
-          url=$(vercel deploy --prebuilt "${flags[@]}" --token="$VERCEL_TOKEN")
+          if [ "$TARGET" = production ]; then flags+=(--skip-domain); fi
+          url=$(vercel deploy --prebuilt "${flags[@]}" --env "APP_RELEASE_SHA=$GITHUB_SHA" --token="$VERCEL_TOKEN")
+          [[ "$url" =~ ^https://[a-zA-Z0-9.-]+\.vercel\.app$ ]]
           echo "url=$url" >> "$GITHUB_OUTPUT"
+      - name: Smoke test the staged deployment
+        env:
+          DEPLOYMENT_URL: ${{ steps.deploy.outputs.url }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: uv run --no-project python scripts/smoke_release.py "$DEPLOYMENT_URL" --revision "$GITHUB_SHA"
+      - name: Promote the current main revision
+        if: inputs.target == 'production'
+        env:
+          DEPLOYMENT_URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          current=$(git ls-remote origin refs/heads/main | cut -f1)
+          test "$current" = "$GITHUB_SHA" || { echo 'Main advanced after this run started. Deploy the new head.'; exit 1; }
+          vercel promote "$DEPLOYMENT_URL" --yes --token="$VERCEL_TOKEN"
+      - name: Record deployment
+        env:
+          DEPLOYMENT_URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          url=$DEPLOYMENT_URL
           printf 'Deployed `%s` to [%s](%s)\n' "$GITHUB_SHA" "$TARGET" "$url" >> "$GITHUB_STEP_SUMMARY"

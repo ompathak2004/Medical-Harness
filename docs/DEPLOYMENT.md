@@ -4,25 +4,13 @@ medical-harness serves the frontend and API from the same FastAPI application. E
 
 ## Vercel
 
-The public production application is [medical-harness.vercel.app](https://medical-harness.vercel.app). The refactor has been merged to `main`, the Vercel production branch. The home page, health endpoint, and logo assets were checked without cookies or deployment-bypass headers. Use this stable production address when sharing; unique preview URLs may require Vercel sign-in.
+The stable production address is [medical-harness.vercel.app](https://medical-harness.vercel.app). Use the GitHub Actions workflow below for preview and production releases. The Vercel configuration disables automatic Git deployments.
 
 Vercel recognizes `app.main:app` through `pyproject.toml`. `vercel.json` gives the Function 180 seconds, longer than the app's default 150-second request timeout. The Python runtime serves the UI and API together.
 
-1. In Vercel, create a project from this GitHub repository. Leave the root directory at the repository root and use the detected FastAPI settings.
-2. Add both provider keys under **Project Settings → Environment Variables** for Production. Add Preview only if preview deployments should call the providers.
-3. Keep the committed `static/dist/`, `static/build.json`, and regional atlas files. These are built locally/CI; production does not run npm. Scratch artifacts, tests, evaluations, and `.env` are excluded from uploads.
-4. Deploy a preview. Check `/api/health`, the home page, `/docs`, and a synthetic question. Confirm no 3D assets download until opening a relevant scene.
+Use the existing linked `medical-harness` Vercel project with the FastAPI preset. Add the required provider variables to each environment you intend to deploy. Keep the committed bundles, build manifest, and atlas files. Vercel excludes local scratch files, tests, eval outputs, and `.env` from uploads.
 
-You can also deploy a linked local checkout with:
-
-```bash
-vercel link --project medical-harness
-vercel deploy --target preview
-```
-
-The refactor links a project named `medical-harness` and connects the GitHub repository. Preview and Production provider variables are configured as sensitive values. Verify Git integration and the production branch in Vercel settings before relying on automatic deployments. Merge the reviewed PR when ready; use `vercel deploy --prod` only for an intentional production deployment. A preview may require the owner's Vercel session because of deployment protection.
-
-Vercel Functions scale independently. In-memory caches, concurrency slots, and rate limits are per instance. Use external shared infrastructure if you need global quotas or durable state. The application has no user authentication or database.
+Vercel Functions scale independently. For a public demo, configure one [Vercel WAF rate-limit rule](https://vercel.com/docs/vercel-firewall/vercel-waf/rate-limiting) on POST requests to the paid chat endpoints, keyed by IP. Check the allowance on your plan before enabling it. Keep provider quotas separate from the app's per-instance rate limits, and use preview access protection for private evaluation.
 
 Preview has `VERCEL_PREVIEW_FEEDBACK_ENABLED=0` to prevent Vercel's feedback toolbar from injecting `vercel.live` scripts that conflict with the application's CSP. This takes effect on new deployments. Keep the app's script policy limited to its own assets. See [Vercel's toolbar settings](https://vercel.com/docs/vercel-toolbar/managing-toolbar).
 
@@ -36,13 +24,19 @@ The app sends page views only. Its `beforeSend` filter reports the root URL with
 
 ## Deployment from GitHub Actions
 
-The `Deploy` workflow is manually dispatched and defaults to Preview. It calls the same CI workflow against the selected commit and deploys only after both check jobs pass. CI retains the original `test` check name as an aggregate gate for existing branch-protection rules. Production is restricted to `main`. Deployments to the same environment are serialized. The CLI is pinned, builds once, and uploads that build with `--prebuilt`; the checked-in frontend bundles have already been verified by CI.
+The `Deploy` workflow defaults to Preview. It runs CI on the selected commit, builds it once, and stamps the deployment with that SHA. The smoke check verifies the revision reported by `/api/health`, the home page and its main bundles, and a synthetic calculator result. For Production, the workflow stages the build without assigning the public domains, checks that it is still the head of `main`, and promotes it after the smoke check passes.
 
-Create GitHub environments named `preview` and `production`. In each environment, set `VERCEL_TOKEN`, `VERCEL_ORG_ID`, and `VERCEL_PROJECT_ID` as secrets. Get the IDs from the existing local `.vercel/project.json` link and confirm they match the intended project. Provider keys remain in Vercel environment settings. Configure required reviewers and a `main` branch restriction on the production environment before using it.
+In the GitHub Preview and Production environments, set `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`, and `VERCEL_AUTOMATION_BYPASS_SECRET`. Get the IDs from the local Vercel project link and generate the smoke-test secret in [Vercel Protection Bypass for Automation](https://vercel.com/docs/deployment-protection/methods-to-bypass-deployment-protection/protection-bypass-automation). Keep the provider keys in Vercel. Restrict the Production environment to `main` and review access before dispatching the workflow.
 
-After the workflow is on the default branch, select **Actions → Deploy → Run workflow**, choose the branch and target, and review the deployment URL in the run summary. Check the deployed home page and `/api/health`; protected previews may need your Vercel session. The workflow does not make live medical-provider calls as a smoke test.
+After the workflow lands on the default branch, select **Actions → Deploy → Run workflow** and choose the branch and environment. The run summary records the revision and deployment URL. Confirm the public health endpoint reports the intended revision after a production promotion.
 
-This workflow does not disable Vercel's existing Git integration. Verify that integration before relying on these checks as the only deployment gate. If Git auto-deploy is enabled, a push can still deploy independently of this workflow; choose one deployment owner in project settings to avoid duplicate deployments. No remote secrets or hosting settings are changed by adding these files.
+Apply the [main branch ruleset](../.github/rulesets/main.json) after reviewing the PR. It requires pull requests, resolved review threads, and the GitHub Actions `test` check, and prevents deletion and force pushes. The template allows a solo maintainer to merge a reviewed PR.
+
+```bash
+gh api --method POST repos/ompathak2004/Medical-Harness/rulesets --input .github/rulesets/main.json
+```
+
+Verify the rule appears in **Settings → Rules → Rulesets** and that pushes no longer start automatic Vercel releases. If a promoted release fails, use the previous verified deployment in [Vercel Instant Rollback](https://vercel.com/docs/instant-rollback), then confirm the public health revision. Use [operator traces](OBSERVABILITY.md) to check whether reviewed answers and provider outcomes recovered.
 
 See [Vercel's GitHub Actions guidance](https://vercel.com/docs/git/vercel-for-github#using-github-actions).
 

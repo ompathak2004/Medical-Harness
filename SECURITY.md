@@ -14,4 +14,5 @@ Include the affected version or commit, reproduction steps with synthetic data, 
 - Rotate a key immediately if it appears in a commit, issue, screenshot, build log, or chat transcript. Remove it from the provider account after the replacement is deployed.
 - The in-process rate limiter is not a distributed abuse-control layer. Public deployments should add platform-level controls appropriate for their traffic.
 - In-memory caches may contain derived health-question text; see [cache configuration](docs/CONFIGURATION.md) for retention settings.
+- Operator traces use allowlisted metadata. Keep the OTLP credentials in the hosting secret store and restrict access to the trace destination. See [operator traces](docs/OBSERVABILITY.md).
 - The application does not provide user authentication or a persistent patient record. Review provider privacy terms before accepting sensitive data.

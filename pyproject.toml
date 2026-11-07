@@ -1,6 +1,6 @@
 [project]
 name = "medical-harness"
-version = "3.0.0"
+version = "3.1.0"
 description = "Evidence-based Medical QA Agent with clinical tools, MediSearch retrieval, and Cerebras LLM"
 requires-python = ">=3.12"
 dependencies = [

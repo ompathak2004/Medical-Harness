@@ -2,7 +2,7 @@
 
 Ask a health question and get an evidence-grounded answer with source articles. medical-harness combines a FastAPI agent, clinical calculators, and an interactive 3D anatomy viewer in a single web application.
 
-[How it works](docs/ARCHITECTURE.md) · [Tools and reliability](docs/RELIABILITY.md) · [Evaluation loop](docs/EVALUATION.md) · [Research decisions](docs/RESEARCH.md)
+[How it works](docs/ARCHITECTURE.md) · [Tools and reliability](docs/RELIABILITY.md) · [Operator traces](docs/OBSERVABILITY.md) · [Evaluation loop](docs/EVALUATION.md) · [Research decisions](docs/RESEARCH.md)
 
 > medical-harness provides educational information, not a diagnosis or a substitute for a clinician. For emergencies, contact local emergency services.
 
@@ -119,7 +119,7 @@ Node 22+ is needed only to change or test the frontend. Self-hosted bundles and 
 
 ## Deploy
 
-The app can run as one FastAPI Function on Vercel. Import this repository, keep the root directory at the repository root, and add `CEREBRAS_API_KEY` and `MEDISEARCH_API_KEY` in **Project Settings → Environment Variables** before deploying. The checked-in `vercel.json` sets a 180-second function limit. You can also deploy with `vercel deploy --prod` after linking a project.
+The app runs as one FastAPI Function on Vercel. Use the [Deploy workflow](docs/DEPLOYMENT.md#deployment-from-github-actions) for previews and production. It verifies CI, the deployed revision, and a synthetic calculator before promotion.
 
 Docker and DigitalOcean deployment notes are in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). Environment variable details are in [docs/CONFIGURATION.md](docs/CONFIGURATION.md). The in-memory cache and rate limiter are local to each process or Vercel Function instance.
 
