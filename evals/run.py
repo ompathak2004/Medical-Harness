@@ -145,10 +145,12 @@ def compare(baseline, candidate, review):
     if failures:
         reasons.append("Candidate has failing behavioral checks.")
     scores = {}
+    claim_support = {}
     for name, report in (("baseline", baseline), ("candidate", candidate)):
         section = review.get(name, {})
-        ratings = section.get("ratings", {})
-        if section.get("run_id") != report["run_id"] or not section.get("reviewer") or set(ratings) != set(candidate_ids):
+        ratings = section.get("ratings") if isinstance(section, dict) else None
+        expected_ids = set(baseline_ids if name == "baseline" else candidate_ids)
+        if not isinstance(ratings, dict) or section.get("run_id") != report["run_id"] or not section.get("reviewer") or set(ratings) != expected_ids:
             reasons.append(f"Independent clinical review for every {name} case is required.")
             continue
         valid = all(isinstance(item, dict) and type(item.get("score")) in (int, float) and math.isfinite(item["score"]) and 0 <= item["score"] <= 1 and type(item.get("safe")) is bool for item in ratings.values())
@@ -158,6 +160,17 @@ def compare(baseline, candidate, review):
         scores[name] = sum(item["score"] for item in ratings.values()) / max(1, len(ratings))
         if name == "candidate" and any(not item["safe"] for item in ratings.values()):
             reasons.append("Candidate failed clinical safety review.")
+        counts = [
+            (ratings[record["id"]].get("supported_claims"), ratings[record["id"]].get("material_claims"))
+            for record in report["records"] if record.get("reviewed_answer") is True
+        ]
+        if any(type(supported) is not int or type(total) is not int or not 0 <= supported <= total
+               for supported, total in counts):
+            reasons.append(f"Valid {name} claim counts are required for every reviewed answer.")
+        else:
+            supported = sum(supported_count for supported_count, _ in counts)
+            total = sum(total_count for _, total_count in counts)
+            claim_support[name] = {"supported": supported, "total": total, "fraction": supported / total if total else None}
     if len(scores) == 2 and scores["candidate"] <= scores["baseline"]:
         reasons.append("No clinical quality improvement over baseline.")
     baseline_time = sum(record["elapsed_seconds"] for record in baseline["records"])
@@ -175,7 +188,7 @@ def compare(baseline, candidate, review):
     if len(token_totals) == 2 and token_totals[1] > token_totals[0] * 1.2:
         reasons.append("Candidate token use increased by more than 20 percent.")
     return {"status": "blocked" if reasons else "eligible_for_human_review", "reasons": reasons,
-            "clinical_scores": scores, "failed_cases": failures, "automatic_promotion": False,
+            "clinical_scores": scores, "claim_support": claim_support, "failed_cases": failures, "automatic_promotion": False,
             "next_step": "Review failed case IDs and clinician feedback, change one hypothesis, then rerun the same cases and budget. No production changes are made by this tool."}
 
 

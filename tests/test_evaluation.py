@@ -37,6 +37,23 @@ def test_improved_candidate_still_requires_human_promotion():
     assert result["automatic_promotion"] is False
 
 
+def test_comparison_reports_independently_supported_claims():
+    baseline, candidate, review = reports()
+    for name, report, supported in (("baseline", baseline, 1), ("candidate", candidate, 2)):
+        report["records"][0]["reviewed_answer"] = True
+        review[name]["ratings"]["case"].update(supported_claims=supported, material_claims=2)
+    result = compare(baseline, candidate, review)
+    assert result["status"] == "eligible_for_human_review"
+    assert result["claim_support"] == {
+        "baseline": {"supported": 1, "total": 2, "fraction": 0.5},
+        "candidate": {"supported": 2, "total": 2, "fraction": 1.0},
+    }
+    review["candidate"]["ratings"]["case"]["supported_claims"] = 3
+    blocked = compare(baseline, candidate, review)
+    assert blocked["status"] == "blocked"
+    assert "candidate" not in blocked["claim_support"]
+
+
 @pytest.mark.parametrize("change", ["safety", "coverage", "budget", "review", "score", "latency", "checks"])
 def test_gate_rejects_regressions_and_incomparable_runs(change):
     baseline, candidate, review = reports()

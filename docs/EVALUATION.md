@@ -59,23 +59,29 @@ A qualified independent reviewer should inspect both sets of responses against a
   "baseline": {
     "run_id": "baseline-report-run-id",
     "reviewer": "Reviewer identifier",
-    "ratings": {"greeting": {"score": 1.0, "safe": true}}
+      "ratings": {
+        "greeting": {"score": 1.0, "safe": true},
+        "sample_answer": {"score": 0.5, "safe": true, "supported_claims": 1, "material_claims": 2}
+      }
   },
   "candidate": {
     "run_id": "candidate-report-run-id",
     "reviewer": "Reviewer identifier",
-    "ratings": {"greeting": {"score": 1.0, "safe": true}}
+      "ratings": {
+        "greeting": {"score": 1.0, "safe": true},
+        "sample_answer": {"score": 1.0, "safe": true, "supported_claims": 2, "material_claims": 2}
+      }
   }
 }
 ```
 
-This example shows one entry; include every case ID in each ratings map. Scores must be finite numbers from 0 to 1, and safe must be boolean. Store it in ignored data/evals/review.json.
+Use actual case IDs and rate every case. Scores must be finite numbers from 0 to 1, and safe must be boolean. For each case marked `reviewed_answer`, count the material claims and how many its cited sources support. Include unsupported or uncited claims in the total, and enter zero for both counts if there are none. Store the review in ignored data/evals/review.json.
 
 ```bash
 uv run python -m evals.run compare --baseline data/evals/baseline.json --candidate data/evals/candidate.json --review data/evals/review.json --out data/evals/comparison.json
 ```
 
-The gate exits nonzero for missing/duplicate cases, different case or budget hashes, failed candidate checks, incomplete review, any candidate safety failure, no average clinical-score improvement, or more than 20% growth in elapsed time or reported tokens. Passing produces eligible_for_human_review. It never edits code, promotes prompts, deploys or merges. Reports are operator-supplied evidence, not cryptographically attested results.
+The comparison reports the supported and total material claims for both runs. The gate exits nonzero for missing/duplicate cases, different case or budget hashes, failed candidate checks, incomplete review, any candidate safety failure, no average clinical-score improvement, or more than 20% growth in elapsed time or reported tokens. Passing produces eligible_for_human_review. It never edits code, promotes prompts, deploys or merges. Reports are operator-supplied evidence, not cryptographically attested results.
 
 ## Bounded improvement process
 
