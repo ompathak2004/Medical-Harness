@@ -13,8 +13,7 @@ scripts/
 deploy/
 eval_healthbench.py
 evals/
-data/
-!app/tools/data/
+/data/
 
 node_modules/
 playwright-report/

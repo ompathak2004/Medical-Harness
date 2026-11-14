@@ -64,10 +64,8 @@ jobs:
         id: deploy
         run: |
           flags=()
-          if [ "$TARGET" = production ]; then flags+=(--prod); fi
-          vercel build "${flags[@]}" --token="$VERCEL_TOKEN"
-          if [ "$TARGET" = production ]; then flags+=(--skip-domain); fi
-          url=$(vercel deploy --prebuilt "${flags[@]}" --env "APP_RELEASE_SHA=$GITHUB_SHA" --token="$VERCEL_TOKEN")
+          if [ "$TARGET" = production ]; then flags+=(--prod --skip-domain); fi
+          url=$(vercel deploy --yes "${flags[@]}" --env "APP_RELEASE_SHA=$GITHUB_SHA" --token="$VERCEL_TOKEN")
           [[ "$url" =~ ^https://[a-zA-Z0-9.-]+\.vercel\.app$ ]]
           echo "url=$url" >> "$GITHUB_OUTPUT"
       - name: Smoke test the staged deployment

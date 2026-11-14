@@ -61,6 +61,11 @@ def smoke(base_url: str, revision: str, bypass: str = "") -> None:
     result, _ = fetch("/api/tools/bmi", {"inputs": {"age_years": 34, "weight_kg": 70, "height_cm": 175}})
     if json.loads(result).get("result", {}).get("bmi") != 22.9:
         raise ValueError("The synthetic calculator result did not match")
+    growth, _ = fetch("/api/tools/growth_percentile", {
+        "inputs": {"sex": "male", "age_months": 0, "measure": "weight", "value": 3.3464},
+    })
+    if json.loads(growth).get("result", {}).get("percentile") != 50.0:
+        raise ValueError("The bundled growth calculator result did not match")
 
 
 def main():
